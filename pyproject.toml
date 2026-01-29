@@ -1,0 +1,33 @@
+[project]
+name = "vibegraph"
+version = "0.1.0"
+description = "VibeGraph: The Nervous System MCP"
+readme = "README.md"
+requires-python = ">=3.11, <3.13"
+dependencies = [
+    "mcp>=1.2.0",
+    "tree-sitter>=0.24.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "tree-sitter-languages>=1.10.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "PT", "RUF"]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["vibegraph"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.14.14",
+]
