@@ -1,5 +1,7 @@
 from mcp.server.fastmcp import FastMCP
 from typing import Literal, Set, List, Dict, Any
+import sys
+from contextlib import redirect_stdout
 from vibegraph.indexer.db import IndexerDB
 from vibegraph.indexer.main import reindex_all
 
@@ -158,7 +160,8 @@ def reindex_project(path: str = ".") -> str:
     """
     db = _get_db()
     try:
-        reindex_all(db, path)
+        with redirect_stdout(sys.stderr):
+            reindex_all(db, path, verbose=True) # Now we can even leave it True since it goes to stderr!
         return f"Successfully reindexed: {path}"
     except Exception as e:
         return f"Error during reindexing: {e}"

@@ -294,6 +294,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pathspec"
+version = "1.0.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/36/e27608899f9b8d4dff0617b2d9ab17ca5608956ca44461ac14ac48b44015/pathspec-1.0.4.tar.gz", hash = "sha256:0210e2ae8a21a9137c0d470578cb0e595af87edaa6ebf12ff176f14a02e0e645", size = 131200, upload-time = "2026-01-27T03:59:46.938Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ef/3c/2c197d226f9ea224a9ab8d197933f9da0ae0aac5b6e0f884e2b8d9c8e9f7/pathspec-1.0.4-py3-none-any.whl", hash = "sha256:fb6ae2fd4e7c921a165808a552060e722767cfa526f99ca5156ed2ce45a5c723", size = 55206, upload-time = "2026-01-27T03:59:45.137Z" },
+]
+
+[[package]]
 name = "pluggy"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -674,6 +683,7 @@ source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
     { name = "mcp" },
+    { name = "pathspec" },
     { name = "tree-sitter" },
     { name = "tree-sitter-languages" },
     { name = "uvicorn" },
@@ -690,6 +700,7 @@ dev = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "mcp", specifier = ">=1.2.0" },
+    { name = "pathspec", specifier = ">=0.12.0" },
     { name = "tree-sitter", specifier = "==0.21.3" },
     { name = "tree-sitter-languages", specifier = ">=1.10.0" },
     { name = "uvicorn", specifier = ">=0.34.0" },
