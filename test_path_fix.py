@@ -1,5 +1,6 @@
-from vibegraph.mcp.server import get_structural_summary, _normalize_path
 from pathlib import Path
+
+from vibegraph.mcp.server import _normalize_path, get_structural_summary
 
 print("Current working directory:", Path.cwd())
 print()

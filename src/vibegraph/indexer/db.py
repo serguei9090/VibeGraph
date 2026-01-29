@@ -8,7 +8,9 @@ from pydantic import BaseModel
 class Node(BaseModel):
     id: str
     name: str
-    kind: Literal['function', 'class', 'module', 'interface', 'variable']
+    kind: Literal[
+        "function", "class", "module", "interface", "variable", "struct", "trait", "impl", "method"
+    ]
     file_path: str
     start_line: int | None = None
     end_line: int | None = None
@@ -19,7 +21,9 @@ class Node(BaseModel):
 class Edge(BaseModel):
     from_node_id: str
     to_node_id: str
-    relation_type: Literal['calls', 'defines', 'inherits', 'references', 'imports']
+    relation_type: Literal[
+        "calls", "defines", "inherits", "references", "imports", "implements", "returns"
+    ]
 
 
 class IndexerDB:
@@ -98,7 +102,7 @@ class IndexerDB:
             # Delete edges originating from these nodes
             placeholders = ",".join("?" for _ in node_ids)
             conn.execute(f"DELETE FROM edges WHERE from_node_id IN ({placeholders})", node_ids)
-            
+
             # Delete the nodes themselves
             conn.execute("DELETE FROM nodes WHERE file_path = ?", (file_path,))
             conn.commit()

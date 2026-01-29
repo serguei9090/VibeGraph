@@ -1,0 +1,255 @@
+from vibegraph.indexer.parser import (
+    GenericParser,
+    GoParser,
+    JavaScriptParser,
+    RustParser,
+    TypeScriptParser,
+)
+
+
+class TestJavaScriptParser:
+    """Test JavaScript/JSX parser"""
+
+    def test_extract_functions_and_classes(self):
+        parser = JavaScriptParser()
+        code = b"""
+class Calculator {
+    add(a, b) {
+        return a + b;
+    }
+}
+
+function multiply(x, y) {
+    return x * y;
+}
+
+const divide = (a, b) => a / b;
+"""
+        nodes, edges = parser.extract("test.js", code)
+
+        # Should extract: Calculator class, add method, multiply function, divide arrow function
+        assert len(nodes) >= 3
+        assert any(n.name == "Calculator" and n.kind == "class" for n in nodes)
+        assert any(n.name == "add" and n.kind == "function" for n in nodes)
+        assert any(n.name == "multiply" and n.kind == "function" for n in nodes)
+
+        # Should have edges (class defines method)
+        assert len(edges) >= 1
+
+    def test_handles_syntax_error(self):
+        """Parser should not crash on malformed code"""
+        parser = JavaScriptParser()
+        bad_code = b"function broken( return 123"
+
+        # Should return empty lists instead of crashing
+        nodes, edges = parser.extract("bad.js", bad_code)
+        assert isinstance(nodes, list)
+        assert isinstance(edges, list)
+
+
+class TestTypeScriptParser:
+    """Test TypeScript/TSX parser"""
+
+    def test_extract_interfaces_and_classes(self):
+        parser = TypeScriptParser()
+        code = b"""
+interface User {
+    name: string;
+    age: number;
+}
+
+class UserService {
+    getUser(id: number): User {
+        return { name: "Test", age: 25 };
+    }
+}
+
+function processUser(user: User): void {
+    console.log(user.name);
+}
+"""
+        nodes, _ = parser.extract("test.ts", code)
+
+        # Should extract: User interface, UserService class, getUser method, processUser function
+        assert len(nodes) >= 3
+        assert any(n.name == "User" and n.kind == "interface" for n in nodes)
+        assert any(n.name == "UserService" and n.kind == "class" for n in nodes)
+        assert any(n.name == "processUser" and n.kind == "function" for n in nodes)
+
+    def test_handles_syntax_error(self):
+        """Parser should not crash on malformed TypeScript"""
+        parser = TypeScriptParser()
+        bad_code = b"interface Broken { name string }"  # Missing colon
+
+        nodes, edges = parser.extract("bad.ts", bad_code)
+        assert isinstance(nodes, list)
+        assert isinstance(edges, list)
+
+
+class TestGoParser:
+    """Test Go parser"""
+
+    def test_extract_structs_and_functions(self):
+        parser = GoParser()
+        code = b"""
+package main
+
+type Person struct {
+    Name string
+    Age  int
+}
+
+func (p *Person) Greet() string {
+    return "Hello, " + p.Name
+}
+
+func main() {
+    println("Hello, World!")
+}
+"""
+        nodes, _ = parser.extract("test.go", code)
+
+        # Should extract: Greet method, main function
+        assert len(nodes) >= 2
+        assert any(n.name == "Greet" for n in nodes)
+        assert any(n.name == "main" for n in nodes)
+
+    def test_handles_syntax_error(self):
+        """Parser should not crash on malformed Go code"""
+        parser = GoParser()
+        bad_code = b"func broken( return 123"
+
+        nodes, edges = parser.extract("bad.go", bad_code)
+        assert isinstance(nodes, list)
+        assert isinstance(edges, list)
+
+
+class TestRustParser:
+    """Test Rust parser"""
+
+    def test_extract_structs_and_traits(self):
+        parser = RustParser()
+        code = b"""
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+trait Drawable {
+    fn draw(&self);
+}
+
+impl Point {
+    fn new(x: i32, y: i32) -> Point {
+        Point { x, y }
+    }
+}
+
+fn distance(p1: &Point, p2: &Point) -> f64 {
+    let dx = (p2.x - p1.x) as f64;
+    let dy = (p2.y - p1.y) as f64;
+    (dx * dx + dy * dy).sqrt()
+}
+"""
+        nodes, _ = parser.extract("test.rs", code)
+
+        # Should extract: Point struct, Drawable trait, new function, distance function
+        assert len(nodes) >= 3
+        assert any(n.name == "Point" and n.kind == "struct" for n in nodes)
+        assert any(n.name == "distance" for n in nodes)
+
+    def test_handles_syntax_error(self):
+        """Parser should not crash on malformed Rust code"""
+        parser = RustParser()
+        bad_code = b"fn broken( -> i32 { 123 }"
+
+        nodes, edges = parser.extract("bad.rs", bad_code)
+        assert isinstance(nodes, list)
+        assert isinstance(edges, list)
+
+
+class TestGenericParser:
+    """Test generic parser for C-family languages"""
+
+    def test_java_extraction(self):
+        parser = GenericParser("java")
+        code = b"""
+public class HelloWorld {
+    public static void main(String[] args) {
+        System.out.println("Hello, World!");
+    }
+    
+    private void helper() {
+        // Helper method
+    }
+}
+"""
+        nodes, _ = parser.extract("test.java", code)
+
+        # Should extract at least the class and methods
+        assert len(nodes) > 0
+        assert any(n.kind in ["class", "function"] for n in nodes)
+
+    def test_cpp_extraction(self):
+        parser = GenericParser("cpp")
+        code = b"""
+class Vector3 {
+public:
+    float x, y, z;
+    
+    Vector3(float x, float y, float z) : x(x), y(y), z(z) {}
+    
+    float magnitude() {
+        return sqrt(x*x + y*y + z*z);
+    }
+};
+
+int main() {
+    return 0;
+}
+"""
+        nodes, _ = parser.extract("test.cpp", code)
+
+        # Should extract class and functions
+        assert len(nodes) > 0
+        assert any(n.kind in ["class", "function"] for n in nodes)
+
+    def test_handles_syntax_error(self):
+        """Parser should not crash on malformed code"""
+        parser = GenericParser("java")
+        bad_code = b"public class Broken { void method( }"
+
+        nodes, edges = parser.extract("bad.java", bad_code)
+        assert isinstance(nodes, list)
+        assert isinstance(edges, list)
+
+
+class TestEdgeCases:
+    """Test edge cases across all parsers"""
+
+    def test_empty_file(self):
+        """Empty files should return empty lists"""
+        parser = JavaScriptParser()
+        nodes, edges = parser.extract("empty.js", b"")
+        assert nodes == []
+        assert edges == []
+
+    def test_whitespace_only(self):
+        """Files with only whitespace should return empty lists"""
+        parser = TypeScriptParser()
+        nodes, edges = parser.extract("whitespace.ts", b"   \n\n  \t  \n")
+        assert nodes == []
+        assert edges == []
+
+    def test_comments_only(self):
+        """Files with only comments might not extract nodes"""
+        parser = JavaScriptParser()
+        code = b"""
+// This is a comment
+/* This is a multi-line
+   comment */
+"""
+        nodes, edges = parser.extract("comments.js", code)
+        # Should not crash, may return empty
+        assert isinstance(nodes, list)
+        assert isinstance(edges, list)

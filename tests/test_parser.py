@@ -17,7 +17,7 @@ class MyClass:
 
     # Check Nodes
     assert len(nodes) == 3
-    
+
     # Node 1: hello_world
     func_node = next(n for n in nodes if n.name == "hello_world")
     assert func_node.kind == "function"

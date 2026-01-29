@@ -1,11 +1,12 @@
 import hashlib
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Any
 
 from tree_sitter import Language, Node, Parser, Tree
 from tree_sitter_languages import get_language, get_parser
 
-from vibegraph.indexer.db import Edge, Node as DBNode
+from vibegraph.indexer.db import Edge
+from vibegraph.indexer.db import Node as DBNode
 
 
 class LanguageParser(ABC):
@@ -15,6 +16,42 @@ class LanguageParser(ABC):
 
     def parse(self, source_code: bytes) -> Tree:
         return self.parser.parse(source_code)
+
+    def _get_text(self, node: Node | None) -> str:
+        """Extract text from a tree-sitter node."""
+        if node is None:
+            return ""
+        return node.text.decode("utf-8")
+
+    def _get_id(self, file_path: str, name: str) -> str:
+        """Generate a unique ID for a node."""
+        return hashlib.md5(f"{file_path}::{name}".encode()).hexdigest()
+
+    def _create_node(
+        self,
+        node_id: str,
+        name: str,
+        kind: Any,
+        file_path: str,
+        node: Node,
+        signature: str | None = None,
+        docstring: str | None = None,
+    ) -> DBNode:
+        """Create a DBNode with common fields."""
+        return DBNode(
+            id=node_id,
+            name=name,
+            kind=kind,
+            file_path=file_path,
+            start_line=node.start_point[0] + 1,
+            end_line=node.end_point[0] + 1,
+            signature=signature,
+            docstring=docstring,
+        )
+
+    def _create_edge(self, from_id: str, to_id: str, relation: Any = "defines") -> Edge:
+        """Create an edge between two nodes."""
+        return Edge(from_node_id=from_id, to_node_id=to_id, relation_type=relation)
 
     @abstractmethod
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
@@ -26,22 +63,16 @@ class PythonParser(LanguageParser):
     def __init__(self):
         super().__init__("python")
 
-    def _get_text(self, node: Node) -> str:
-        return node.text.decode("utf-8")
-
-    def _get_id(self, file_path: str, name: str) -> str:
-        return hashlib.md5(f"{file_path}::{name}".encode()).hexdigest()
-
-    def _extract_docstring(self, node: Node) -> Optional[str]:
+    def _extract_docstring(self, node: Node) -> str | None:
         body_node = node.child_by_field_name("body")
         if not body_node:
             return None
-        
+
         for child in body_node.children:
             if child.type == "expression_statement":
                 first_child = child.children[0]
                 if first_child.type == "string":
-                    return self._get_text(first_child).strip('"""').strip("'''")
+                    return self._get_text(first_child).strip("\"'")
             elif child.type == "comment":
                 continue
             else:
@@ -53,7 +84,7 @@ class PythonParser(LanguageParser):
         nodes: list[DBNode] = []
         edges: list[Edge] = []
 
-        def traverse(node: Node, parent_id: Optional[str] = None):
+        def traverse(node: Node, parent_id: str | None = None):
             node_id = None
 
             # 1. Definitions
@@ -63,35 +94,25 @@ class PythonParser(LanguageParser):
                     name = self._get_text(name_node)
                     node_id = self._get_id(file_path, name)
                     kind = "function" if node.type == "function_definition" else "class"
-                    
+
                     params_node = node.child_by_field_name("parameters")
                     signature = self._get_text(params_node) if params_node else None
                     docstring = self._extract_docstring(node)
 
-                    nodes.append(DBNode(
-                        id=node_id,
-                        name=name,
-                        kind=kind,
-                        file_path=file_path,
-                        start_line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
-                        signature=signature,
-                        docstring=docstring,
-                    ))
+                    nodes.append(
+                        self._create_node(
+                            node_id, name, kind, file_path, node, signature, docstring
+                        )
+                    )
 
                     if parent_id:
-                        edges.append(Edge(
-                            from_node_id=parent_id,
-                            to_node_id=node_id,
-                            relation_type="defines"
-                        ))
+                        edges.append(
+                            Edge(
+                                from_node_id=parent_id, to_node_id=node_id, relation_type="defines"
+                            )
+                        )
 
             # 2. Calls (simplified for now, avoiding unused variable lint)
-            elif node.type == "call":
-                # func_node = node.child_by_field_name("function")
-                # if func_node and parent_id:
-                #    pass # Logic for call edges would go here
-                pass
 
             # Recurse
             current_scope_id = node_id if node_id else parent_id
@@ -101,53 +122,41 @@ class PythonParser(LanguageParser):
         traverse(tree.root_node)
         return nodes, edges
 
+
 class JavaScriptParser(LanguageParser):
     """Parser for JavaScript and JSX files."""
+
     def __init__(self):
         super().__init__("javascript")
-
-    def _get_text(self, node: Node) -> str:
-        return node.text.decode("utf-8")
-
-    def _get_id(self, file_path: str, name: str) -> str:
-        return hashlib.md5(f"{file_path}::{name}".encode()).hexdigest()
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
         tree = self.parse(source_code)
         nodes: list[DBNode] = []
         edges: list[Edge] = []
 
-        def traverse(node: Node, parent_id: Optional[str] = None):
+        def traverse(node: Node, parent_id: str | None = None):
             node_id = None
 
             # Function declarations, arrow functions, class methods
-            if node.type in ("function_declaration", "arrow_function", "function", "method_definition"):
+            if node.type in (
+                "function_declaration",
+                "arrow_function",
+                "function",
+                "method_definition",
+            ):
                 name_node = node.child_by_field_name("name")
                 name = self._get_text(name_node) if name_node else "<anonymous>"
-                
+
                 node_id = self._get_id(file_path, name)
                 kind = "function"
-                
+
                 params_node = node.child_by_field_name("parameters")
                 signature = self._get_text(params_node) if params_node else None
 
-                nodes.append(DBNode(
-                    id=node_id,
-                    name=name,
-                    kind=kind,
-                    file_path=file_path,
-                    start_line=node.start_point[0] + 1,
-                    end_line=node.end_point[0] + 1,
-                    signature=signature,
-                    docstring=None,
-                ))
+                nodes.append(self._create_node(node_id, name, kind, file_path, node, signature))
 
                 if parent_id:
-                    edges.append(Edge(
-                        from_node_id=parent_id,
-                        to_node_id=node_id,
-                        relation_type="defines"
-                    ))
+                    edges.append(self._create_edge(parent_id, node_id))
 
             # Class declarations
             elif node.type == "class_declaration":
@@ -156,23 +165,10 @@ class JavaScriptParser(LanguageParser):
                     name = self._get_text(name_node)
                     node_id = self._get_id(file_path, name)
 
-                    nodes.append(DBNode(
-                        id=node_id,
-                        name=name,
-                        kind="class",
-                        file_path=file_path,
-                        start_line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
-                        signature=None,
-                        docstring=None,
-                    ))
+                    nodes.append(self._create_node(node_id, name, "class", file_path, node))
 
                     if parent_id:
-                        edges.append(Edge(
-                            from_node_id=parent_id,
-                            to_node_id=node_id,
-                            relation_type="defines"
-                        ))
+                        edges.append(self._create_edge(parent_id, node_id))
 
             current_scope_id = node_id if node_id else parent_id
             for child in node.children:
@@ -184,51 +180,39 @@ class JavaScriptParser(LanguageParser):
 
 class TypeScriptParser(LanguageParser):
     """Parser for TypeScript and TSX files."""
+
     def __init__(self, language="typescript"):
         super().__init__(language)
-
-    def _get_text(self, node: Node) -> str:
-        return node.text.decode("utf-8")
-
-    def _get_id(self, file_path: str, name: str) -> str:
-        return hashlib.md5(f"{file_path}::{name}".encode()).hexdigest()
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
         tree = self.parse(source_code)
         nodes: list[DBNode] = []
         edges: list[Edge] = []
 
-        def traverse(node: Node, parent_id: Optional[str] = None):
+        def traverse(node: Node, parent_id: str | None = None):
             node_id = None
 
             # Function declarations, arrow functions, methods
-            if node.type in ("function_declaration", "arrow_function", "function", "method_definition", "method_signature"):
+            if node.type in (
+                "function_declaration",
+                "arrow_function",
+                "function",
+                "method_definition",
+                "method_signature",
+            ):
                 name_node = node.child_by_field_name("name")
                 name = self._get_text(name_node) if name_node else "<anonymous>"
-                
+
                 node_id = self._get_id(file_path, name)
                 kind = "function"
-                
+
                 params_node = node.child_by_field_name("parameters")
                 signature = self._get_text(params_node) if params_node else None
 
-                nodes.append(DBNode(
-                    id=node_id,
-                    name=name,
-                    kind=kind,
-                    file_path=file_path,
-                    start_line=node.start_point[0] + 1,
-                    end_line=node.end_point[0] + 1,
-                    signature=signature,
-                    docstring=None,
-                ))
+                nodes.append(self._create_node(node_id, name, kind, file_path, node, signature))
 
                 if parent_id:
-                    edges.append(Edge(
-                        from_node_id=parent_id,
-                        to_node_id=node_id,
-                        relation_type="defines"
-                    ))
+                    edges.append(self._create_edge(parent_id, node_id))
 
             # Class, interface declarations
             elif node.type in ("class_declaration", "interface_declaration"):
@@ -238,23 +222,10 @@ class TypeScriptParser(LanguageParser):
                     node_id = self._get_id(file_path, name)
                     kind = "interface" if node.type == "interface_declaration" else "class"
 
-                    nodes.append(DBNode(
-                        id=node_id,
-                        name=name,
-                        kind=kind,
-                        file_path=file_path,
-                        start_line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
-                        signature=None,
-                        docstring=None,
-                    ))
+                    nodes.append(self._create_node(node_id, name, kind, file_path, node))
 
                     if parent_id:
-                        edges.append(Edge(
-                            from_node_id=parent_id,
-                            to_node_id=node_id,
-                            relation_type="defines"
-                        ))
+                        edges.append(self._create_edge(parent_id, node_id))
 
             current_scope_id = node_id if node_id else parent_id
             for child in node.children:
@@ -266,21 +237,16 @@ class TypeScriptParser(LanguageParser):
 
 class GoParser(LanguageParser):
     """Parser for Go files."""
+
     def __init__(self):
         super().__init__("go")
-
-    def _get_text(self, node: Node) -> str:
-        return node.text.decode("utf-8")
-
-    def _get_id(self, file_path: str, name: str) -> str:
-        return hashlib.md5(f"{file_path}::{name}".encode()).hexdigest()
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
         tree = self.parse(source_code)
         nodes: list[DBNode] = []
         edges: list[Edge] = []
 
-        def traverse(node: Node, parent_id: Optional[str] = None):
+        def traverse(node: Node, parent_id: str | None = None):
             node_id = None
 
             # Function declarations, methods
@@ -289,27 +255,16 @@ class GoParser(LanguageParser):
                 if name_node:
                     name = self._get_text(name_node)
                     node_id = self._get_id(file_path, name)
-                    
+
                     params_node = node.child_by_field_name("parameters")
                     signature = self._get_text(params_node) if params_node else None
 
-                    nodes.append(DBNode(
-                        id=node_id,
-                        name=name,
-                        kind="function",
-                        file_path=file_path,
-                        start_line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
-                        signature=signature,
-                        docstring=None,
-                    ))
+                    nodes.append(
+                        self._create_node(node_id, name, "function", file_path, node, signature)
+                    )
 
                     if parent_id:
-                        edges.append(Edge(
-                            from_node_id=parent_id,
-                            to_node_id=node_id,
-                            relation_type="defines"
-                        ))
+                        edges.append(self._create_edge(parent_id, node_id))
 
             # Type declarations (struct, interface)
             elif node.type == "type_declaration":
@@ -319,25 +274,12 @@ class GoParser(LanguageParser):
                     if name_node:
                         name = self._get_text(name_node)
                         node_id = self._get_id(file_path, name)
-                        kind = "interface" if type_spec.type == "interface_type" else "class"
+                        kind = "interface" if type_spec.type == "interface_type" else "struct"
 
-                        nodes.append(DBNode(
-                            id=node_id,
-                            name=name,
-                            kind=kind,
-                            file_path=file_path,
-                            start_line=node.start_point[0] + 1,
-                            end_line=node.end_point[0] + 1,
-                            signature=None,
-                            docstring=None,
-                        ))
+                        nodes.append(self._create_node(node_id, name, kind, file_path, node))
 
                         if parent_id:
-                            edges.append(Edge(
-                                from_node_id=parent_id,
-                                to_node_id=node_id,
-                                relation_type="defines"
-                            ))
+                            edges.append(self._create_edge(parent_id, node_id))
 
             current_scope_id = node_id if node_id else parent_id
             for child in node.children:
@@ -349,21 +291,16 @@ class GoParser(LanguageParser):
 
 class RustParser(LanguageParser):
     """Parser for Rust files."""
+
     def __init__(self):
         super().__init__("rust")
-
-    def _get_text(self, node: Node) -> str:
-        return node.text.decode("utf-8")
-
-    def _get_id(self, file_path: str, name: str) -> str:
-        return hashlib.md5(f"{file_path}::{name}".encode()).hexdigest()
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
         tree = self.parse(source_code)
         nodes: list[DBNode] = []
         edges: list[Edge] = []
 
-        def traverse(node: Node, parent_id: Optional[str] = None):
+        def traverse(node: Node, parent_id: str | None = None):
             node_id = None
 
             # Function items
@@ -372,27 +309,16 @@ class RustParser(LanguageParser):
                 if name_node:
                     name = self._get_text(name_node)
                     node_id = self._get_id(file_path, name)
-                    
+
                     params_node = node.child_by_field_name("parameters")
                     signature = self._get_text(params_node) if params_node else None
 
-                    nodes.append(DBNode(
-                        id=node_id,
-                        name=name,
-                        kind="function",
-                        file_path=file_path,
-                        start_line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
-                        signature=signature,
-                        docstring=None,
-                    ))
+                    nodes.append(
+                        self._create_node(node_id, name, "function", file_path, node, signature)
+                    )
 
                     if parent_id:
-                        edges.append(Edge(
-                            from_node_id=parent_id,
-                            to_node_id=node_id,
-                            relation_type="defines"
-                        ))
+                        edges.append(self._create_edge(parent_id, node_id))
 
             # Struct, trait, impl declarations
             elif node.type in ("struct_item", "trait_item", "impl_item"):
@@ -400,25 +326,18 @@ class RustParser(LanguageParser):
                 if name_node:
                     name = self._get_text(name_node)
                     node_id = self._get_id(file_path, name)
-                    kind = "interface" if node.type == "trait_item" else "class"
+                    kind: Any = "class"
+                    if node.type == "trait_item":
+                        kind = "trait"
+                    elif node.type == "struct_item":
+                        kind = "struct"
+                    elif node.type == "impl_item":
+                        kind = "impl"
 
-                    nodes.append(DBNode(
-                        id=node_id,
-                        name=name,
-                        kind=kind,
-                        file_path=file_path,
-                        start_line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
-                        signature=None,
-                        docstring=None,
-                    ))
+                    nodes.append(self._create_node(node_id, name, kind, file_path, node))
 
                     if parent_id:
-                        edges.append(Edge(
-                            from_node_id=parent_id,
-                            to_node_id=node_id,
-                            relation_type="defines"
-                        ))
+                        edges.append(self._create_edge(parent_id, node_id))
 
             current_scope_id = node_id if node_id else parent_id
             for child in node.children:
@@ -430,15 +349,10 @@ class RustParser(LanguageParser):
 
 class GenericParser(LanguageParser):
     """Generic parser for languages with basic function/class extraction."""
+
     def __init__(self, language: str):
         super().__init__(language)
         self.language_name = language
-
-    def _get_text(self, node: Node) -> str:
-        return node.text.decode("utf-8")
-
-    def _get_id(self, file_path: str, name: str) -> str:
-        return hashlib.md5(f"{file_path}::{name}".encode()).hexdigest()
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
         tree = self.parse(source_code)
@@ -447,44 +361,43 @@ class GenericParser(LanguageParser):
 
         # Common node types across C-like languages
         function_types = {
-            "function_definition", "function_declaration", "method_declaration",
-            "function_item", "method_definition"
+            "function_definition",
+            "function_declaration",
+            "method_declaration",
+            "function_item",
+            "method_definition",
         }
         class_types = {
-            "class_definition", "class_declaration", "struct_declaration",
-            "interface_declaration", "trait_item"
+            "class_definition",
+            "class_declaration",
+            "struct_declaration",
+            "interface_declaration",
+            "trait_item",
         }
 
-        def traverse(node: Node, parent_id: Optional[str] = None):
+        def traverse(node: Node, parent_id: str | None = None):
             node_id = None
 
             if node.type in function_types:
-                name_node = node.child_by_field_name("name") or node.child_by_field_name("declarator")
+                name_node = node.child_by_field_name("name") or node.child_by_field_name(
+                    "declarator"
+                )
                 if name_node:
                     # For C/C++, might need to extract from declarator
                     name_text = self._get_text(name_node)
                     # Simple extraction - get first identifier
-                    name = name_text.split("(")[0].strip().split()[-1] if "(" in name_text else name_text
-                    
+                    name = (
+                        name_text.split("(")[0].strip().split()[-1]
+                        if "(" in name_text
+                        else name_text
+                    )
+
                     node_id = self._get_id(file_path, name)
 
-                    nodes.append(DBNode(
-                        id=node_id,
-                        name=name,
-                        kind="function",
-                        file_path=file_path,
-                        start_line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
-                        signature=None,
-                        docstring=None,
-                    ))
+                    nodes.append(self._create_node(node_id, name, "function", file_path, node))
 
                     if parent_id:
-                        edges.append(Edge(
-                            from_node_id=parent_id,
-                            to_node_id=node_id,
-                            relation_type="defines"
-                        ))
+                        edges.append(self._create_edge(parent_id, node_id))
 
             elif node.type in class_types:
                 name_node = node.child_by_field_name("name")
@@ -492,23 +405,10 @@ class GenericParser(LanguageParser):
                     name = self._get_text(name_node)
                     node_id = self._get_id(file_path, name)
 
-                    nodes.append(DBNode(
-                        id=node_id,
-                        name=name,
-                        kind="class",
-                        file_path=file_path,
-                        start_line=node.start_point[0] + 1,
-                        end_line=node.end_point[0] + 1,
-                        signature=None,
-                        docstring=None,
-                    ))
+                    nodes.append(self._create_node(node_id, name, "class", file_path, node))
 
                     if parent_id:
-                        edges.append(Edge(
-                            from_node_id=parent_id,
-                            to_node_id=node_id,
-                            relation_type="defines"
-                        ))
+                        edges.append(self._create_edge(parent_id, node_id))
 
             current_scope_id = node_id if node_id else parent_id
             for child in node.children:
@@ -520,7 +420,7 @@ class GenericParser(LanguageParser):
 
 class ParserFactory:
     @staticmethod
-    def get_parser(file_path: str) -> Optional[LanguageParser]:
+    def get_parser(file_path: str) -> LanguageParser | None:
         if file_path.endswith(".py"):
             return PythonParser()
         elif file_path.endswith((".js", ".jsx")):

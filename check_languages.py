@@ -1,9 +1,23 @@
 from tree_sitter_languages import get_language
 
 languages = [
-    'python', 'javascript', 'typescript', 'tsx', 
-    'go', 'rust', 'java', 'c', 'cpp', 'c_sharp', 
-    'ruby', 'php', 'bash', 'json', 'yaml', 'html', 'css'
+    "python",
+    "javascript",
+    "typescript",
+    "tsx",
+    "go",
+    "rust",
+    "java",
+    "c",
+    "cpp",
+    "c_sharp",
+    "ruby",
+    "php",
+    "bash",
+    "json",
+    "yaml",
+    "html",
+    "css",
 ]
 
 supported = []

@@ -1,6 +1,7 @@
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any
 
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
@@ -10,7 +11,7 @@ from vibegraph.indexer.main import index_file
 
 
 class CodeChangeHandler(FileSystemEventHandler):
-    def __init__(self, db: IndexerDB, on_change: Optional[Callable[[], None]] = None):
+    def __init__(self, db: IndexerDB, on_change: Callable[[], None] | None = None):
         self.db = db
         self.on_change = on_change
 
@@ -43,12 +44,12 @@ class CodeChangeHandler(FileSystemEventHandler):
         self._notify()
 
 
-def start_observer(path: str, db: IndexerDB, callback: Optional[Callable[[], None]] = None) -> Observer:
+def start_observer(path: str, db: IndexerDB, callback: Callable[[], None] | None = None) -> Any:
     """Start the observer and return it (non-blocking)."""
     path_obj = Path(path).resolve()
     if not path_obj.exists():
         print(f"Warning: Path not found: {path}")
-        
+
     event_handler = CodeChangeHandler(db, callback)
     observer = Observer()
     observer.schedule(event_handler, str(path_obj), recursive=True)
@@ -68,8 +69,10 @@ def start_watcher_blocking(path: str):
         observer.stop()
     observer.join()
 
+
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) < 2:
         print("Usage: python -m vibegraph.indexer.watcher <directory>")
     else:
