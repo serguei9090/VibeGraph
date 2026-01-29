@@ -57,6 +57,36 @@ cd src/web && npm run dev
 uv run python -m vibegraph.mcp.server
 ```
 
+### MCP Server Configuration
+
+To integrate VibeGraph with AI clients (Claude Desktop, Cline, etc.), add this to your MCP settings file:
+
+**For Claude Desktop** (`claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "vibegraph": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "I:/01-Master_Code/Test-Labs/VibeGraph",
+        "run",
+        "python",
+        "-m",
+        "vibegraph.mcp.server"
+      ]
+    }
+  }
+}
+```
+
+**For other MCP clients**, use the equivalent configuration format with:
+- **Command**: `uv`
+- **Args**: `--directory <path-to-vibegraph> run python -m vibegraph.mcp.server`
+- **Working Directory**: Your VibeGraph installation path
+
+> **Note**: Make sure to index your codebase first (`uv run python -m vibegraph.indexer.main .`) before querying via MCP.
+
 ## Architecture
 
 ```
@@ -84,11 +114,46 @@ uv run python -m vibegraph.mcp.server
 
 ## MCP Tools (AI Interface)
 
-VibeGraph exposes these tools to AI agents via the MCP protocol:
+VibeGraph exposes a **Model Context Protocol (MCP) server** that AI agents can query to understand your codebase structure. Once your code is indexed, AI can:
 
-- **`get_structural_summary(file_path)`**: Get an overview of classes/functions in a file
-- **`get_call_stack(node_name, direction, depth)`**: Trace function calls up/down the graph
-- **`impact_analysis(file_path)`**: See what breaks if you change this file
+### Query Tools
+
+**`get_structural_summary(file_path)`**
+- Returns all functions and classes in a file with signatures and line numbers
+- Example: `get_structural_summary("src/vibegraph/indexer/db.py")`
+- Output: List of classes (`IndexerDB`), methods, and their signatures
+
+**`get_call_stack(node_name, file_path?, direction, depth)`**
+- Traces function calls up (who calls this?) or down (what does this call?)
+- `direction`: `"up"` (callers), `"down"` (callees), or `"both"`
+- `depth`: How many levels to traverse (default: 1)
+- Example: `get_call_stack("upsert_node", direction="up", depth=2)`
+- Output: Tree showing all functions that call `upsert_node`
+
+**`impact_analysis(file_path)`**
+- Shows what other files/functions depend on this file
+- Identifies breaking changes before you make them
+- Example: `impact_analysis("src/vibegraph/indexer/db.py")`
+- Output: List of dependent files and specific functions affected
+
+### Workflow Integration
+
+```python
+# AI Agent Workflow Example:
+# 1. Understand a file's structure
+summary = get_structural_summary("parser.py")
+
+# 2. Trace how a function is used
+callers = get_call_stack("extract", direction="up", depth=3)
+
+# 3. Check impact before refactoring
+impact = impact_analysis("parser.py")
+```
+
+### Current Limitations
+- **Indexing**: Must be done via CLI (`python -m vibegraph.indexer.main .`) before querying
+- **Search**: Currently tool-based; full-text search via MCP coming soon
+- **Language Support**: Python only (JS/TS planned)
 
 ## Testing
 
@@ -117,7 +182,7 @@ VibeGraph/
 
 ## Contributing
 
-See [`.antigravityrules`](.antigravityrules) for detailed development workflows, architecture decisions, and troubleshooting.
+See [`mainrule.md`](.agent/rules/mainrule.md) for detailed development workflows, architecture decisions, and troubleshooting.
 
 ## License
 
