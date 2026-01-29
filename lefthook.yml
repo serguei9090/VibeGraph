@@ -3,18 +3,18 @@ pre-commit:
   
   commands:
     ruff-check:
-      glob: "*.py"
+      glob: "{src,tests}/**/*.py"
       run: uv run ruff check {staged_files}
       
     ruff-format:
-      glob: "*.py"
+      glob: "{src,tests}/**/*.py"
       run: uv run ruff format --check {staged_files}
       
     pytest-fast:
       run: uv run pytest -x --tb=short
       
     type-check:
-      glob: "*.py"
+      glob: "{src,tests}/**/*.py"
       run: uv run mypy {staged_files} || true
       stage_fixed: true
 

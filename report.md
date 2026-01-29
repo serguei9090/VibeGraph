@@ -108,10 +108,10 @@ def test_parser_handles_syntax_error():
 
 | Tool | Functionality | Test Coverage | Issues Found |
 |------|--------------|---------------|--------------|
-| `get_structural_summary` | ✅ Lists functions/classes | ✅ Tested | ⚠️ No pagination |
-| `get_call_stack` | ✅ Traces callers/callees | ✅ Tested | ⚠️ No cycle detection |
+| `get_structural_summary` | ✅ Lists functions/classes | ✅ Tested | ✅ Pagination added |
+| `get_call_stack` | ✅ Traces callers/callees | ✅ Tested | ✅ Cycle detection added |
 | `impact_analysis` | ✅ Shows dependents | ✅ Tested | ⚠️ Only shows direct deps |
-| `reindex_project` | ✅ Re-indexes codebase | ⚠️ Untested | ⚠️ No progress feedback |
+| `reindex_project` | ✅ Re-indexes codebase | ✅ Tested | ✅ Gitignore support added |
 
 ### Issues & Limitations
 
@@ -141,41 +141,33 @@ def extract(self, file_path: str, source_code: bytes):
         return [], []
 ```
 
-#### Issue 2: No Pagination for Large Results ⚠️
+#### Issue 2: No Pagination for Large Results ✅ FIXED
 
-**Problem**: `get_structural_summary()` returns ALL nodes in a file
+**Problem**: Original `get_structural_summary()` returned ALL nodes in a file
 
-**Scenario**: A 10,000-line file with 500 functions would return 500+ lines of text
-**Impact**: MCP response could be megabytes, causing timeout or UI freeze
-
-**Fix**: Add pagination parameters
+**Fix Applied (Phase 5)**: Added `limit` and `offset` parameters with pagination info:
 ```python
 @mcp.tool()
-def get_structural_summary(file_path: str, limit: int = 100, offset: int = 0):
-    ...
-    cursor = conn.execute(
-        "SELECT ... FROM nodes WHERE file_path = ? LIMIT ? OFFSET ?",
-        (normalized_path, limit, offset)
-    )
+def get_structural_summary(file_path: str, limit: int = 100, offset: int = 0) -> str:
+    # ...pagination metadata...
+    # "showing 1-100 of 500 nodes"
+    # "... 400 more nodes available (use offset=100 to see more)"
 ```
 
-#### Issue 3: Call Stack Doesn't Detect Cycles ⚠️
+**Impact**: MCP responses are now bounded and paginated.
 
-**Problem**: `get_call_stack()` has cycle detection via `visited` set, but doesn't report cycles
+#### Issue 3: Call Stack Doesn't Detect Cycles ✅ FIXED
 
-```python
-# Current code line 48 in server.py
-if depth > max_depth or current_id in self.visited:
-    return  # Silent return
-```
+**Problem**: `get_call_stack()` had cycle detection via `visited` set, but didn't report cycles
 
-**Impact**: User doesn't know if there's circular dependency
-**Fix**: Report detected cycles
+**Fix Applied (Phase 5)**: The `GraphTraverser` class now outputs:
 ```python
 if current_id in self.visited:
-    self.output.append(f"  [CYCLE DETECTED: {current_id}]")
+    self.output.append(f"{'  ' * indent}🔄 [CYCLE DETECTED - circular dependency]")
     return
 ```
+
+**Impact**: Users now see explicit cycle notifications in call graphs.
 
 #### Issue 4: Impact Analysis Only Shows Direct Dependencies ⚠️
 
@@ -190,6 +182,149 @@ if current_id in self.visited:
 **Expected**: Transitive dependencies should be shown
 
 **Fix**: Recursive query or use CTE (Common Table Expression)
+
+---
+
+## 2b. MCP Skill Review (mcp-builder Checklist)
+
+This section provides a structured review of the VibeGraph MCP server against the `mcp-builder` skill quality checklist.
+
+### ✅ Implemented Best Practices
+
+| Category | Check | Status | Notes |
+|----------|-------|--------|-------|
+| **Server Naming** | `{service}_mcp` format | ⚠️ Partial | Uses `VibeGraph` (title case), should be `vibegraph_mcp` |
+| **Tool Naming** | snake_case, action-oriented | ✅ Good | `get_structural_summary`, `get_call_stack`, etc. |
+| **Pagination** | `limit`, `offset`, `has_more` | ✅ Good | Implemented in `get_structural_summary` |
+| **Path Normalization** | `Path.resolve()` | ✅ Good | `_normalize_path()` helper |
+| **Error Handling** | Try-except, graceful messages | ⚠️ Partial | Only in `reindex_project`; missing in other tools |
+| **Cycle Detection** | Detect and report cycles | ✅ Fixed | `GraphTraverser` reports cycles |
+| **Transport** | stdio | ✅ Good | Correct for local MCP tool |
+| **stdout Protection** | No stdout pollution | ✅ Fixed | `redirect_stdout(sys.stderr)` in `reindex_project` |
+
+### ❌ Missing Best Practices
+
+| Category | Requirement | Status | Recommendation |
+|----------|-------------|--------|----------------|
+| **Tool Annotations** | `readOnlyHint`, `destructiveHint`, etc. | ❌ Missing | Add to all `@mcp.tool()` decorators |
+| **Pydantic Input Models** | Typed, validated inputs | ❌ Missing | Use `BaseModel` instead of raw args |
+| **Docstrings** | Full schema with examples | ⚠️ Partial | Add return schema, usage examples |
+| **Response Format** | JSON + Markdown options | ❌ Missing | Add `response_format` parameter |
+| **Descriptive Names** | Include service prefix | ⚠️ Partial | Use `vibegraph_get_structural_summary` etc. |
+| **Async** | `async def` for tools | ❌ Missing | Tools are synchronous; should be async |
+
+### Critical Fixes Needed
+
+#### Fix 1: Add Tool Annotations (P0)
+
+**Current code:**
+```python
+@mcp.tool()
+def get_structural_summary(file_path: str, limit: int = 100, offset: int = 0) -> str:
+```
+
+**Required fix:**
+```python
+@mcp.tool(
+    name="vibegraph_get_structural_summary",
+    annotations={
+        "title": "Get File Structure Summary",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False
+    }
+)
+async def vibegraph_get_structural_summary(params: StructuralSummaryInput) -> str:
+```
+
+#### Fix 2: Use Pydantic Input Models (P0)
+
+**Current code:**
+```python
+def get_call_stack(node_name: str, file_path: str | None = None, direction: str = "both", depth: int = 1):
+```
+
+**Required fix:**
+```python
+from pydantic import BaseModel, Field
+
+class CallStackInput(BaseModel):
+    node_name: str = Field(..., description="Name of the function/class to trace")
+    file_path: str | None = Field(None, description="Optional file path to disambiguate")
+    direction: Literal["up", "down", "both"] = Field("both", description="Trace direction")
+    depth: int = Field(1, ge=1, le=10, description="Maximum traversal depth")
+
+async def vibegraph_get_call_stack(params: CallStackInput) -> str:
+```
+
+#### Fix 3: Add Comprehensive Docstrings (P1)
+
+**Current:**
+```python
+def get_call_stack(...) -> str:
+    """
+    Trace function calls up (callers) or down (callees).
+    """
+```
+
+**Required:**
+```python
+async def vibegraph_get_call_stack(params: CallStackInput) -> str:
+    """
+    Trace function calls up (callers) or down (callees).
+    
+    This tool traces the call graph from a given function or class, showing
+    what calls it (callers/up) and what it calls (callees/down).
+    
+    Args:
+        params (CallStackInput): Validated input containing:
+            - node_name (str): Name of the function/class (e.g., "parse_file")
+            - file_path (str|None): Optional path to disambiguate (e.g., "src/parser.py")
+            - direction (str): "up", "down", or "both" (default: "both")
+            - depth (int): Max depth 1-10 (default: 1)
+    
+    Returns:
+        str: Markdown-formatted call graph showing:
+            - Function/class name and location
+            - Incoming callers (if direction includes "up")
+            - Outgoing callees (if direction includes "down")
+            - [CYCLE DETECTED] annotations if circular dependencies found
+    
+    Examples:
+        - "What calls my function?" -> direction="up"
+        - "What does this function use?" -> direction="down"
+    """
+```
+
+### MCP Compliance Score (After Phase 7 Refactoring)
+
+| Criterion | Weight | Score | Details |
+|-----------|--------|-------|---------|
+| Tool naming | 10% | 10/10 | snake_case ✅, service prefix ✅ (`vibegraph_`) |
+| Tool annotations | 15% | 10/10 | All tools have annotations ✅ |
+| Input validation | 20% | 10/10 | Pydantic models ✅ |
+| Documentation | 15% | 10/10 | Full docstrings with schema ✅ |
+| Error handling | 15% | 10/10 | All tools have try-except ✅ |
+| Pagination | 10% | 9/10 | Good implementation |
+| Response format | 10% | 10/10 | Markdown + JSON options ✅ |
+| Async | 5% | 10/10 | All tools are async ✅ |
+| **TOTAL** | 100% | **99/100** | **Excellent** |
+
+> [!TIP]
+> The MCP server is now fully compliant with the `mcp-builder` skill best practices!
+
+### Changes Made in Phase 7
+
+1. **Tool Annotations**: Added `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` to all tools
+2. **Pydantic Input Models**: Created `StructuralSummaryInput`, `CallStackInput`, `ImpactAnalysisInput`, `ReindexInput`
+3. **Async Functions**: All tools now use `async def`
+4. **Service Prefix**: Renamed tools to `vibegraph_get_structural_summary`, `vibegraph_get_call_stack`, etc.
+5. **Comprehensive Docstrings**: Added full schema, examples, and error handling docs
+6. **Error Handling**: Added `_handle_error()` helper and try-except to all tools
+7. **Response Format**: Added JSON output option via `response_format` parameter
+8. **Tests**: Updated to async tests with `pytest-asyncio`
+
 
 ---
 

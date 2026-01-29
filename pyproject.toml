@@ -12,6 +12,7 @@ dependencies = [
     "tree-sitter-languages>=1.10.0",
     "watchdog>=6.0.0",
     "pathspec>=0.12.0",
+    "websockets>=14.0",
 ]
 
 [project.scripts]
@@ -21,9 +22,24 @@ vibegraph-mcp = "vibegraph.mcp.server:main"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+force-exclude = true
+exclude = [
+    ".agent/**",
+    ".agents/**",
+    ".git/**",
+    ".mypy_cache/**",
+    ".pytest_cache/**",
+    ".ruff_cache/**",
+    ".venv/**",
+    "**/__pycache__/**",
+    "build/**",
+    "dist/**",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "A", "C4", "PT", "RUF"]
@@ -37,6 +53,7 @@ dev = [
     "lefthook>=2.0.15",
     "mypy>=1.19.1",
     "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
     "ruff>=0.14.14",
 ]
@@ -47,4 +64,15 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
-exclude = ["tests/", ".venv/"]
+exclude = [
+    "tests/",
+    ".venv/",
+    ".agent/",
+    ".agents/",
+    ".mypy_cache/",
+    ".pytest_cache/",
+    "__pycache__/",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
