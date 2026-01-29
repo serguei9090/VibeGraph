@@ -156,6 +156,12 @@ VibeGraph exposes a **Model Context Protocol (MCP) server** that AI agents can q
 - Example: `impact_analysis("src/vibegraph/indexer/db.py")`
 - Output: List of dependent files and specific functions affected
 
+**`reindex_project(path?)`**
+- Reindexes a file or directory recursively
+- `path`: Path to index (default: `.`)
+- Example: `reindex_project(".")`
+- Output: Confirmation message
+
 ### Workflow Integration
 
 ```python
@@ -171,7 +177,7 @@ impact = impact_analysis("parser.py")
 ```
 
 ### Current Limitations
-- **Indexing**: Must be done via CLI (`python -m vibegraph.indexer.main .`) before querying
+- **Indexing**: Supported via MCP (`reindex_project`) and CLI
 - **Search**: Currently tool-based; full-text search via MCP coming soon
 - **Language Support**: Python only (JS/TS planned)
 

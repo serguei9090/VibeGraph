@@ -37,14 +37,9 @@ def index_file(db: IndexerDB, file_path: str):
         print(f"Error indexing {file_path}: {e}")
 
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: python -m vibegraph.indexer.main <directory_or_file>")
-        sys.exit(1)
-
-    target_path = Path(sys.argv[1])
-    db = IndexerDB()
-
+def reindex_all(db: IndexerDB, target_path_str: str):
+    """Reindex a file or directory recursively."""
+    target_path = Path(target_path_str)
     if target_path.is_file():
         index_file(db, str(target_path))
     elif target_path.is_dir():
@@ -52,12 +47,21 @@ def main():
             for file in files:
                 full_path = Path(root) / file
                 # Skip venvs and hidden files
-                if ".venv" in str(full_path) or ".git" in str(full_path):
+                if any(part.startswith('.') for part in full_path.parts) or ".venv" in str(full_path):
                     continue
                 
                 index_file(db, str(full_path))
     else:
         print(f"Path not found: {target_path}")
+
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python -m vibegraph.indexer.main <directory_or_file>")
+        sys.exit(1)
+
+    db = IndexerDB()
+    reindex_all(db, sys.argv[1])
 
 if __name__ == "__main__":
     main()

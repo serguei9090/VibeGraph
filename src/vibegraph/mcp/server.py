@@ -1,6 +1,7 @@
 from mcp.server.fastmcp import FastMCP
 from typing import Literal, Set, List, Dict, Any
 from vibegraph.indexer.db import IndexerDB
+from vibegraph.indexer.main import reindex_all
 
 mcp = FastMCP("VibeGraph")
 
@@ -148,6 +149,19 @@ def impact_analysis(file_path: str) -> str:
             output.append("No external dependencies found (Safe to refactor?).")
 
     return "\n".join(output)
+
+@mcp.tool()
+def reindex_project(path: str = ".") -> str:
+    """
+    Reindex a file or directory recursively.
+    Use "." for the current project root.
+    """
+    db = _get_db()
+    try:
+        reindex_all(db, path)
+        return f"Successfully reindexed: {path}"
+    except Exception as e:
+        return f"Error during reindexing: {e}"
 
 def main():
     """Entry point for the vibegraph-mcp console script."""
