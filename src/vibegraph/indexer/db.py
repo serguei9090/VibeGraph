@@ -27,8 +27,15 @@ class Edge(BaseModel):
 
 
 class IndexerDB:
-    def __init__(self, db_path: str = "vibegraph.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str | None = None):
+        if db_path is None:
+            # Default to local context directory
+            context_dir = Path.cwd() / "vibegraph_context"
+            context_dir.mkdir(exist_ok=True)
+            self.db_path = str(context_dir / "vibegraph.db")
+        else:
+            self.db_path = db_path
+
         self._init_db()
 
     def _get_conn(self) -> sqlite3.Connection:

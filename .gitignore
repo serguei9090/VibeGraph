@@ -34,6 +34,7 @@ venv.bak/
 # SQLite
 *.sqlite
 *.db
+vibegraph_context/
 
 # Node
 node_modules/

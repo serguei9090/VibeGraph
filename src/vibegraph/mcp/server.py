@@ -28,7 +28,11 @@ mcp = FastMCP("vibegraph_mcp")
 
 def _get_db() -> IndexerDB:
     """Get a database connection."""
-    return IndexerDB()
+    # Ensure context directory exists
+    context_dir = Path.cwd() / "vibegraph_context"
+    context_dir.mkdir(exist_ok=True)
+    db_path = context_dir / "vibegraph.db"
+    return IndexerDB(db_path=str(db_path))
 
 
 def _normalize_path(file_path: str) -> str:

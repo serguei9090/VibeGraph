@@ -60,7 +60,16 @@ def reindex_all(db: IndexerDB, target_path_str: str, verbose: bool = True):
     target_path = Path(target_path_str).resolve()
 
     # default skips
-    skip_dirs = {".git", ".venv", "node_modules", "__pycache__", ".ruff_cache", "dist", "build"}
+    skip_dirs = {
+        ".git",
+        ".venv",
+        "node_modules",
+        "__pycache__",
+        ".ruff_cache",
+        "dist",
+        "build",
+        "vibegraph_context",
+    }
 
     spec = None
     if target_path.is_dir():
