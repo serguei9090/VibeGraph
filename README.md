@@ -31,7 +31,31 @@ uv sync
 
 # Install frontend dependencies  
 cd src/web && npm install && cd ../..
+
+# Install pre-commit hooks (for development)
+uv run lefthook install
 ```
+
+### Development Setup
+
+VibeGraph uses lefthook for pre-commit hooks to ensure code quality:
+
+```bash
+# Run linting
+uv run ruff check .
+uv run ruff format .
+
+# Run type checking
+uv run mypy src/
+
+# Run tests
+uv run pytest -v
+
+# Run tests with coverage
+uv run pytest --cov=src/vibegraph --cov-report=term-missing
+```
+
+Pre-commit hooks will automatically run linting, formatting, and fast tests before each commit. Full test suite runs on pre-push.
 
 ### Running VibeGraph
 
