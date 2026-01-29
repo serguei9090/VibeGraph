@@ -57,17 +57,21 @@ cd src/web && npm run dev
 uv run python -m vibegraph.mcp.server
 ```
 
-### MCP Server Configuration
+### MCP Server Configuration (Stable)
 
-To integrate VibeGraph with AI clients (Claude Desktop, Cline, etc.), add this to your MCP settings file:
+To ensure VibeGraph always uses a compatible Python version (3.12), even if your system default is 3.13+, use the following configurations.
 
 **For Claude Desktop** (`claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
     "vibegraph": {
-      "command": "uvx",
+      "command": "uv",
       "args": [
+        "tool",
+        "run",
+        "--python",
+        "3.12",
         "--from",
         "git+https://github.com/serguei9090/vibegraph",
         "vibegraph-mcp"
@@ -76,6 +80,11 @@ To integrate VibeGraph with AI clients (Claude Desktop, Cline, etc.), add this t
   }
 }
 ```
+
+**Why this works**: 
+- `uv tool run` (same as `uvx`) creates an isolated environment.
+- `--python 3.12` forces `uv` to use/download a compatible version.
+- `git+https...` pulls the latest code directly.
 
 **For local development** (using your local clone):
 ```json
@@ -87,6 +96,8 @@ To integrate VibeGraph with AI clients (Claude Desktop, Cline, etc.), add this t
         "--directory",
         "I:/01-Master_Code/Test-Labs/VibeGraph",
         "run",
+        "--python",
+        "3.12",
         "vibegraph-mcp"
       ]
     }
@@ -94,10 +105,7 @@ To integrate VibeGraph with AI clients (Claude Desktop, Cline, etc.), add this t
 }
 ```
 
-> **Note**: 
-> - Replace `YOUR_USERNAME/vibegraph` with your actual GitHub repository path
-> - Make sure to index your codebase first (`uv run python -m vibegraph.indexer.main .`) before querying via MCP
-> - The MCP server will only have access to the indexed database in the current directory
+> **Troubleshooting**: If you get an "unexpected argument" error, ensure your `uv` is up to date: `uv self update`.
 
 ## Architecture
 
