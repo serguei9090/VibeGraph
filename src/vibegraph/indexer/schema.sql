@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS nodes (
     id TEXT PRIMARY KEY,           -- Unique hash of file_path + name
     name TEXT NOT NULL,
-    kind TEXT CHECK(kind IN ('function', 'class', 'module', 'interface', 'variable')),
+    kind TEXT,                     -- Flexible: 'function', 'class', 'struct', 'trait', 'impl', 'variable', 'module'
     file_path TEXT NOT NULL,
     start_line INTEGER,
     end_line INTEGER,
@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS edges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     from_node_id TEXT,             -- The caller/user
     to_node_id TEXT,               -- The callee/definition
-    relation_type TEXT CHECK(relation_type IN ('calls', 'defines', 'inherits', 'references', 'imports')),
+    relation_type TEXT,            -- Flexible: 'calls', 'defines', 'inherits', 'references', 'imports', 'implements'
     FOREIGN KEY(from_node_id) REFERENCES nodes(id),
     FOREIGN KEY(to_node_id) REFERENCES nodes(id)
 );

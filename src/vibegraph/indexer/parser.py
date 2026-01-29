@@ -112,7 +112,55 @@ class PythonParser(LanguageParser):
                             )
                         )
 
-            # 2. Calls (simplified for now, avoiding unused variable lint)
+            # 2. Function Calls
+            if parent_id and node.type == "call":
+                func_node = node.child_by_field_name("function")
+                if func_node:
+                    # Handle simple calls like foo() or obj.method()
+                    called_name = self._get_text(func_node)
+                    if "." in called_name:
+                        called_name = called_name.split(".")[-1]  # Simple heuristic for method name
+
+                    # We don't have the target node ID resolved here (cross-file),
+                    # so we create a "reference" node or edge.
+                    # For VibeGraph's simple model, we'll try to link to a node in the SAME file
+                    # or just create a 'call_reference' node if we want to store it.
+                    # But the requirement is 'calls' edges.
+                    # Without full symbol resolution, we can only emit an edge if we can
+                    # guess the ID.
+
+                    # Let's create a *virtual* node ID for the called symbol in this file context?
+                    # No, that will duplicate nodes.
+                    # Better approach: We emit an edge to a POTENTIAL target ID.
+                    # (In a real system we'd need a second pass or a symbol table).
+
+                    # For now, let's just log it or link to a "best guess" local ID
+                    # OR we simply store the call as a special node type "call_site"
+                    # and link parent -> call_site -> (maybe) target.
+
+                    # SIMPLIFICATION for VibeGraph v1 (as per plan):
+                    # We will create a "call" edge from parent_id to a new node representing
+                    # the CALLED function.
+                    # But if that node doesn't exist? Pydantic DB integrity might fail if we enforce
+                    # FKs. The current DB schema might not enforce strict FKs for edges to nodes
+                    # that don't exist yet. Let's check DB schema first.
+                    pass
+
+            # 3. Imports
+            if node.type in ("import_statement", "import_from_statement"):
+                # Extract modules
+                if node.type == "import_statement":
+                    for child in node.children:
+                        if child.type == "dotted_name":
+                            # module_name = self._get_text(child)
+                            # create import edge? imports are usually file-level.
+                            # We can link file-node (if we had one) to the module.
+                            pass
+                elif node.type == "import_from_statement":
+                    module_node = node.child_by_field_name("module_name")
+                    if module_node:
+                        # module_name = self._get_text(module_node)
+                        pass
 
             # Recurse
             current_scope_id = node_id if node_id else parent_id
@@ -170,6 +218,47 @@ class JavaScriptParser(LanguageParser):
                     if parent_id:
                         edges.append(self._create_edge(parent_id, node_id))
 
+                    # Check for inheritance
+                    class_heritage = node.child_by_field_name("class_heritage")
+                    if class_heritage:
+                        extends_clause = class_heritage.children[0]
+                        if extends_clause.type == "extends_clause":
+                            base_class_node = extends_clause.children[1]
+                            base_class_name = self._get_text(base_class_node)
+                            # Create a virtual node for external dependency or best effort link
+                            base_id = self._get_id(file_path, base_class_name)
+                            edges.append(
+                                Edge(
+                                    from_node_id=node_id,
+                                    to_node_id=base_id,
+                                    relation_type="inherits",
+                                )
+                            )
+
+            # Function Calls
+            if parent_id and node.type == "call_expression":
+                func_node = node.child_by_field_name("function")
+                if func_node:
+                    called_name = self._get_text(func_node)
+                    # Simplified: just create a relationship
+                    # We might need a "call_target" node if it's external
+                    # For now just use hash of name as potential ID
+                    target_id = self._get_id(file_path, called_name)
+                    edges.append(
+                        Edge(from_node_id=parent_id, to_node_id=target_id, relation_type="calls")
+                    )
+
+            # Imports
+            if node.type == "import_statement":
+                source_node = node.child_by_field_name("source")
+                if source_node:
+                    # module_name = self._get_text(source_node).strip("'\"")
+                    # Create a module node for the import
+                    # module_id = self._get_id(file_path, module_name)
+                    # For imports, we often link the FILE to the module, but we don't have a
+                    # file node here easily unless we made one.
+                    pass
+
             current_scope_id = node_id if node_id else parent_id
             for child in node.children:
                 traverse(child, current_scope_id)
@@ -226,6 +315,55 @@ class TypeScriptParser(LanguageParser):
 
                     if parent_id:
                         edges.append(self._create_edge(parent_id, node_id))
+
+                    # Check for inheritance (extends) and implementation (implements)
+                    class_heritage = node.child_by_field_name("class_heritage")
+                    if class_heritage:
+                        for child in class_heritage.children:
+                            if child.type == "extends_clause":
+                                for type_node in child.children:
+                                    if type_node.type == "type_identifier":
+                                        base_name = self._get_text(type_node)
+                                        base_id = self._get_id(file_path, base_name)
+                                        edges.append(
+                                            Edge(
+                                                from_node_id=node_id,
+                                                to_node_id=base_id,
+                                                relation_type="inherits",
+                                            )
+                                        )
+                            elif child.type == "implements_clause":
+                                for type_node in child.children:
+                                    if type_node.type == "type_identifier":
+                                        interface_name = self._get_text(type_node)
+                                        interface_id = self._get_id(file_path, interface_name)
+                                        edges.append(
+                                            Edge(
+                                                from_node_id=node_id,
+                                                to_node_id=interface_id,
+                                                relation_type="implements",
+                                            )
+                                        )
+
+            # Function Calls
+            if parent_id and node.type == "call_expression":
+                func_node = node.child_by_field_name("function")
+                if func_node:
+                    called_name = self._get_text(func_node)
+                    if "." in called_name:
+                        called_name = called_name.split(".")[-1]
+
+                    target_id = self._get_id(file_path, called_name)
+                    edges.append(
+                        Edge(from_node_id=parent_id, to_node_id=target_id, relation_type="calls")
+                    )
+
+            # Imports
+            if node.type == "import_statement":
+                source_node = node.child_by_field_name("source")
+                if source_node:
+                    # module_name = self._get_text(source_node).strip("'\"")
+                    pass
 
             current_scope_id = node_id if node_id else parent_id
             for child in node.children:

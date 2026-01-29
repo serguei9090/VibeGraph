@@ -145,6 +145,44 @@ class ReindexInput(BaseModel):
     )
 
 
+class ReferencesInput(BaseModel):
+    """Input model for finding reference operations."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True)
+
+    symbol_name: str = Field(
+        ...,
+        description="Name of the function/class/variable to find references for",
+        min_length=1,
+    )
+
+
+class DependenciesInput(BaseModel):
+    """Input model for dependency analysis operations."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True)
+
+    file_path: str = Field(
+        ...,
+        description="Path to the file to check for outgoing dependencies",
+        min_length=1,
+    )
+
+
+class SearchInput(BaseModel):
+    """Input model for signature search operations."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, validate_assignment=True)
+
+    pattern: str = Field(
+        ...,
+        description=(
+            "SQL pattern to search for in node signatures (e.g. '%List[str]%', 'async def%')"
+        ),
+        min_length=1,
+    )
+
+
 # =============================================================================
 # Helper Classes
 # =============================================================================
@@ -518,6 +556,177 @@ async def vibegraph_impact_analysis(params: ImpactAnalysisInput) -> str:
 
     except Exception as e:
         return _handle_error(e, f"analyzing impact for {params.file_path}")
+
+
+@mcp.tool(
+    name="vibegraph_find_references",
+    annotations={
+        "title": "Find Symbol References",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },  # type: ignore
+)
+async def vibegraph_find_references(params: ReferencesInput) -> str:
+    """
+    Find where a specific function or class is called/used.
+
+    Queries the graph for 'calls' or 'references' edges pointing TO the given symbol name.
+
+    Args:
+        params (ReferencesInput): Validated input parameters containing:
+            - symbol_name (str): The name to search for (e.g. "IndexerDB")
+
+    Returns:
+        str: Markdown list of usages with location info.
+    """
+    try:
+        db = _get_db()
+        with db._get_conn() as conn:
+            # First find potential target node IDs by name
+            # (There might be multiple if same name used in diff files)
+            cursor = conn.execute(
+                "SELECT id, name, file_path FROM nodes WHERE name = ?", (params.symbol_name,)
+            )
+            targets = cursor.fetchall()
+
+            if not targets:
+                return f"Symbol '{params.symbol_name}' not found in index."
+
+            output = [f"## References to `{params.symbol_name}`"]
+
+            for target in targets:
+                target_desc = f"`{target['name']}` from `{target['file_path']}`"
+
+                # Query incoming edges of type 'calls' or 'references'
+                query = """
+                    SELECT n.name, n.file_path, n.start_line, e.relation_type
+                    FROM edges e
+                    JOIN nodes n ON e.from_node_id = n.id
+                    WHERE e.to_node_id = ? AND e.relation_type IN ('calls', 'references')
+                """
+                cursor = conn.execute(query, (target["id"],))
+                refs = cursor.fetchall()
+
+                if refs:
+                    output.append(f"\n### Usages of {target_desc}")
+                    for ref in refs:
+                        output.append(
+                            f"- Used by `{ref['name']}` in `{ref['file_path']}` "
+                            f"(L{ref['start_line']}) [{ref['relation_type']}]"
+                        )
+                else:
+                    output.append(f"\n### Usages of {target_desc}\n- No direct calls found.")
+
+        return "\n".join(output)
+    except Exception as e:
+        return _handle_error(e, f"finding references for {params.symbol_name}")
+
+
+@mcp.tool(
+    name="vibegraph_get_dependencies",
+    annotations={
+        "title": "Get File Dependencies",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },  # type: ignore
+)
+async def vibegraph_get_dependencies(params: DependenciesInput) -> str:
+    """
+    List modules and symbols imported by a specific file.
+
+    Queries outgoing 'imports' edges from the file.
+
+    Args:
+        params (DependenciesInput): Validated input parameters containing:
+            - file_path (str): Path to the file.
+
+    Returns:
+        str: Markdown list of dependencies.
+    """
+    try:
+        normalized_path = _normalize_path(params.file_path)
+        db = _get_db()
+
+        with db._get_conn() as conn:
+            # Find nodes in this file, then check their outgoing import edges?
+            # Actually import edges usually link from a file-scope/module node OR
+            # generic nodes in that file.
+
+            # Let's query outgoing edges from ANY node in this file having relation 'imports'
+            query = """
+                SELECT DISTINCT n_to.name, n_to.file_path, n_to.kind
+                FROM nodes n_from
+                JOIN edges e ON n_from.id = e.from_node_id
+                JOIN nodes n_to ON e.to_node_id = n_to.id
+                WHERE n_from.file_path = ? AND e.relation_type = 'imports'
+             """
+
+            cursor = conn.execute(query, (normalized_path,))
+            deps = cursor.fetchall()
+
+            output = [f"## Dependencies for `{normalized_path}`"]
+            if not deps:
+                output.append("No explicit imports found in index.")
+            else:
+                for dep in deps:
+                    output.append(
+                        f"- Imports `{dep['name']}` ({dep['kind']}) from `{dep['file_path']}`"
+                    )
+
+        return "\n".join(output)
+    except Exception as e:
+        return _handle_error(e, f"getting dependencies for {params.file_path}")
+
+
+@mcp.tool(
+    name="vibegraph_search_by_signature",
+    annotations={
+        "title": "Search by Signature",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },  # type: ignore
+)
+async def vibegraph_search_by_signature(params: SearchInput) -> str:
+    """
+    Search for functions matching a specific signature pattern.
+
+    Useful for finding functions with specific arguments or return types.
+
+    Args:
+        params (SearchInput): Patern using SQL LIKE syntax (e.g. "%List[str]%")
+
+    Returns:
+        str: List of matching functions.
+    """
+    try:
+        db = _get_db()
+        with db._get_conn() as conn:
+            query = (
+                "SELECT name, signature, file_path, start_line "
+                "FROM nodes WHERE signature LIKE ? LIMIT 50"
+            )
+            cursor = conn.execute(query, (params.pattern,))
+            rows = cursor.fetchall()
+
+            output = [f"## Signature Search: `{params.pattern}`"]
+            if not rows:
+                output.append("No matches found.")
+            else:
+                for row in rows:
+                    output.append(
+                        f"- **`{row['name']}`**: `{row['signature']}`\n"
+                        f"  - In `{row['file_path']}`:L{row['start_line']}"
+                    )
+
+        return "\n".join(output)
+    except Exception as e:
+        return _handle_error(e, f"searching signature {params.pattern}")
 
 
 @mcp.tool(
