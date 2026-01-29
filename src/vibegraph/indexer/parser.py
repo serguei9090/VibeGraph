@@ -80,9 +80,21 @@ class PythonParser(LanguageParser):
         return None
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
+        if not source_code.strip():
+            return [], []
+
         tree = self.parse(source_code)
         nodes: list[DBNode] = []
         edges: list[Edge] = []
+
+        # Create a node for the file itself (module)
+        file_name = file_path.split("/")[-1]  # Simple basename
+        file_module_id = self._get_id(file_path, file_name)
+        # Create a node for the whole file/module
+        # We use the root node of the tree for location info
+        nodes.append(
+            self._create_node(file_module_id, file_name, "module", file_path, tree.root_node)
+        )
 
         def traverse(node: Node, parent_id: str | None = None):
             node_id = None
@@ -121,53 +133,52 @@ class PythonParser(LanguageParser):
                     if "." in called_name:
                         called_name = called_name.split(".")[-1]  # Simple heuristic for method name
 
-                    # We don't have the target node ID resolved here (cross-file),
-                    # so we create a "reference" node or edge.
-                    # For VibeGraph's simple model, we'll try to link to a node in the SAME file
-                    # or just create a 'call_reference' node if we want to store it.
-                    # But the requirement is 'calls' edges.
-                    # Without full symbol resolution, we can only emit an edge if we can
-                    # guess the ID.
-
-                    # Let's create a *virtual* node ID for the called symbol in this file context?
-                    # No, that will duplicate nodes.
-                    # Better approach: We emit an edge to a POTENTIAL target ID.
-                    # (In a real system we'd need a second pass or a symbol table).
-
-                    # For now, let's just log it or link to a "best guess" local ID
-                    # OR we simply store the call as a special node type "call_site"
-                    # and link parent -> call_site -> (maybe) target.
-
-                    # SIMPLIFICATION for VibeGraph v1 (as per plan):
+                    # Simplification for VibeGraph v1 (as per plan):
                     # We will create a "call" edge from parent_id to a new node representing
                     # the CALLED function.
-                    # But if that node doesn't exist? Pydantic DB integrity might fail if we enforce
-                    # FKs. The current DB schema might not enforce strict FKs for edges to nodes
-                    # that don't exist yet. Let's check DB schema first.
+                    # pass
                     pass
 
             # 3. Imports
             if node.type in ("import_statement", "import_from_statement"):
-                # Extract modules
                 if node.type == "import_statement":
                     for child in node.children:
                         if child.type == "dotted_name":
-                            # module_name = self._get_text(child)
-                            # create import edge? imports are usually file-level.
-                            # We can link file-node (if we had one) to the module.
-                            pass
+                            module_name = self._get_text(child)
+                            # External modules don't have a file path yet
+                            module_id = self._get_id("external", module_name)
+
+                            # Create a virtual node for external module (idempotent if same ID)
+                            nodes.append(
+                                self._create_node(
+                                    module_id, module_name, "module", "external", node
+                                )
+                            )
+
+                            # Link file -> external module
+                            # Use file_module_id as source
+                            edges.append(self._create_edge(file_module_id, module_id, "imports"))
+
                 elif node.type == "import_from_statement":
                     module_node = node.child_by_field_name("module_name")
                     if module_node:
-                        # module_name = self._get_text(module_node)
-                        pass
+                        module_name = self._get_text(module_node)
+                        module_id = self._get_id("external", module_name)
+
+                        nodes.append(
+                            self._create_node(module_id, module_name, "module", "external", node)
+                        )
+                        edges.append(self._create_edge(file_module_id, module_id, "imports"))
 
             # Recurse
+            # If we created a node (`node_id`), it becomes the scope for children.
+            # If not, we pass the current `parent_id`.
             current_scope_id = node_id if node_id else parent_id
             for child in node.children:
                 traverse(child, current_scope_id)
 
-        traverse(tree.root_node)
+        # Start traversal with the file module as the parent
+        traverse(tree.root_node, file_module_id)
         return nodes, edges
 
 
@@ -178,9 +189,19 @@ class JavaScriptParser(LanguageParser):
         super().__init__("javascript")
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
+        if not source_code.strip():
+            return [], []
+
         tree = self.parse(source_code)
         nodes: list[DBNode] = []
         edges: list[Edge] = []
+
+        # Create a node for the file itself (module)
+        file_name = file_path.split("/")[-1]
+        file_module_id = self._get_id(file_path, file_name)
+        nodes.append(
+            self._create_node(file_module_id, file_name, "module", file_path, tree.root_node)
+        )
 
         def traverse(node: Node, parent_id: str | None = None):
             node_id = None
@@ -263,7 +284,7 @@ class JavaScriptParser(LanguageParser):
             for child in node.children:
                 traverse(child, current_scope_id)
 
-        traverse(tree.root_node)
+        traverse(tree.root_node, file_module_id)
         return nodes, edges
 
 
@@ -274,9 +295,19 @@ class TypeScriptParser(LanguageParser):
         super().__init__(language)
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
+        if not source_code.strip():
+            return [], []
+
         tree = self.parse(source_code)
         nodes: list[DBNode] = []
         edges: list[Edge] = []
+
+        # Create a node for the file itself (module)
+        file_name = file_path.split("/")[-1]
+        file_module_id = self._get_id(file_path, file_name)
+        nodes.append(
+            self._create_node(file_module_id, file_name, "module", file_path, tree.root_node)
+        )
 
         def traverse(node: Node, parent_id: str | None = None):
             node_id = None
@@ -369,7 +400,7 @@ class TypeScriptParser(LanguageParser):
             for child in node.children:
                 traverse(child, current_scope_id)
 
-        traverse(tree.root_node)
+        traverse(tree.root_node, file_module_id)
         return nodes, edges
 
 
@@ -380,9 +411,19 @@ class GoParser(LanguageParser):
         super().__init__("go")
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
+        if not source_code.strip():
+            return [], []
+
         tree = self.parse(source_code)
         nodes: list[DBNode] = []
         edges: list[Edge] = []
+
+        # Create a node for the file itself (module)
+        file_name = file_path.split("/")[-1]
+        file_module_id = self._get_id(file_path, file_name)
+        nodes.append(
+            self._create_node(file_module_id, file_name, "module", file_path, tree.root_node)
+        )
 
         def traverse(node: Node, parent_id: str | None = None):
             node_id = None
@@ -423,7 +464,7 @@ class GoParser(LanguageParser):
             for child in node.children:
                 traverse(child, current_scope_id)
 
-        traverse(tree.root_node)
+        traverse(tree.root_node, file_module_id)
         return nodes, edges
 
 
@@ -434,9 +475,19 @@ class RustParser(LanguageParser):
         super().__init__("rust")
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
+        if not source_code.strip():
+            return [], []
+
         tree = self.parse(source_code)
         nodes: list[DBNode] = []
         edges: list[Edge] = []
+
+        # Create a node for the file itself (module)
+        file_name = file_path.split("/")[-1]
+        file_module_id = self._get_id(file_path, file_name)
+        nodes.append(
+            self._create_node(file_module_id, file_name, "module", file_path, tree.root_node)
+        )
 
         def traverse(node: Node, parent_id: str | None = None):
             node_id = None
@@ -481,7 +532,7 @@ class RustParser(LanguageParser):
             for child in node.children:
                 traverse(child, current_scope_id)
 
-        traverse(tree.root_node)
+        traverse(tree.root_node, file_module_id)
         return nodes, edges
 
 
@@ -493,9 +544,19 @@ class GenericParser(LanguageParser):
         self.language_name = language
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
+        if not source_code.strip():
+            return [], []
+
         tree = self.parse(source_code)
         nodes: list[DBNode] = []
         edges: list[Edge] = []
+
+        # Create a node for the file itself (module)
+        file_name = file_path.split("/")[-1]
+        file_module_id = self._get_id(file_path, file_name)
+        nodes.append(
+            self._create_node(file_module_id, file_name, "module", file_path, tree.root_node)
+        )
 
         # Common node types across C-like languages
         function_types = {
@@ -552,7 +613,7 @@ class GenericParser(LanguageParser):
             for child in node.children:
                 traverse(child, current_scope_id)
 
-        traverse(tree.root_node)
+        traverse(tree.root_node, file_module_id)
         return nodes, edges
 
 

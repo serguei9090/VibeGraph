@@ -5,6 +5,7 @@ This server provides tools to analyze and understand codebases through
 structural parsing (Tree-sitter) and a relational database (SQLite).
 """
 
+import os
 import sys
 from contextlib import redirect_stdout
 from enum import Enum
@@ -36,8 +37,29 @@ def _get_db() -> IndexerDB:
 
 
 def _normalize_path(file_path: str) -> str:
-    """Normalize file path to match DB storage format (absolute, resolved)."""
-    return str(Path(file_path).resolve())
+    """Normalize file path to match DB storage format (relative to project root)."""
+    try:
+        return str(Path(file_path).resolve().relative_to(Path.cwd()))
+    except ValueError:
+        # Fallback if path is not in CWD (e.g. system files)
+        return str(Path(file_path).resolve())
+
+
+def _safe_str(s: str) -> str:
+    """Safely format string for output, replacing emojis on Windows if needed."""
+    if os.name != "nt":
+        return s
+
+    # Simple replacement map for common emojis used in this file
+    replacements = {
+        "🔄": "[CYCLE]",
+        "←": "<-",
+        "→": "->",
+        "✅": "[OK]",
+    }
+    for char, replacement in replacements.items():
+        s = s.replace(char, replacement)
+    return s
 
 
 def _handle_error(e: Exception, context: str = "") -> str:
@@ -215,7 +237,8 @@ class GraphTraverser:
 
         # Check for cycles
         if current_id in self.visited:
-            self.output.append(f"{'  ' * indent}🔄 [CYCLE DETECTED - circular dependency]")
+            msg = _safe_str("🔄 [CYCLE DETECTED - circular dependency]")
+            self.output.append(f"{'  ' * indent}{msg}")
             return
 
         self.visited.add(current_id)
@@ -227,7 +250,7 @@ class GraphTraverser:
                 JOIN nodes n ON e.from_node_id = n.id
                 WHERE e.to_node_id = ?
             """
-            prefix = "← called by"
+            prefix = _safe_str("← called by")
         else:
             query = """
                 SELECT e.to_node_id as neighbor_id, e.relation_type, n.name, n.file_path 
@@ -235,7 +258,7 @@ class GraphTraverser:
                 JOIN nodes n ON e.to_node_id = n.id
                 WHERE e.from_node_id = ?
             """
-            prefix = "→ calls"
+            prefix = _safe_str("→ calls")
 
         cursor = conn.execute(query, (current_id,))
         neighbors = cursor.fetchall()
@@ -461,14 +484,14 @@ async def vibegraph_get_call_stack(params: CallStackInput) -> str:
                 if params.direction in (TraceDirection.UP, TraceDirection.BOTH):
                     traverser.output.append("\n**Callers (Incoming):**")
                     traverser.traverse(start_node["id"], 1, params.depth, "up", 0, conn)
-                    if not any("←" in line for line in traverser.output[-5:]):
+                    if not any(_safe_str("←") in line for line in traverser.output[-5:]):
                         traverser.output.append("  (no callers found)")
                     traverser.visited.clear()
 
                 if params.direction in (TraceDirection.DOWN, TraceDirection.BOTH):
                     traverser.output.append("\n**Callees (Outgoing):**")
                     traverser.traverse(start_node["id"], 1, params.depth, "down", 0, conn)
-                    if not any("→" in line for line in traverser.output[-5:]):
+                    if not any(_safe_str("→") in line for line in traverser.output[-5:]):
                         traverser.output.append("  (no callees found)")
 
         return "\n".join(traverser.output)
@@ -552,7 +575,8 @@ async def vibegraph_impact_analysis(params: ImpactAnalysisInput) -> str:
                     total_impact += len(dependents)
 
             if total_impact == 0:
-                output.append("✅ No external dependencies found. Safe to refactor internally.")
+                msg = _safe_str("✅ No external dependencies found. Safe to refactor internally.")
+                output.append(msg)
             else:
                 output.append(f"\n**Total Impact**: {total_impact} dependent components")
 
@@ -776,7 +800,7 @@ async def vibegraph_reindex_project(params: ReindexInput) -> str:
     try:
         with redirect_stdout(sys.stderr):
             reindex_all(db, params.path, verbose=True)
-        return f"✅ Successfully reindexed: {params.path}"
+        return _safe_str(f"✅ Successfully reindexed: {params.path}")
     except Exception as e:
         return _handle_error(e, f"reindexing {params.path}")
 

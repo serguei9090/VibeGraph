@@ -16,7 +16,11 @@ class MyClass:
     nodes, edges = parser.extract(file_path, source_code)
 
     # Check Nodes
-    assert len(nodes) == 3
+    assert len(nodes) == 4
+
+    # Node 0: test.py (module)
+    module_node = next(n for n in nodes if n.kind == "module")
+    assert module_node.name == "test.py"
 
     # Node 1: hello_world
     func_node = next(n for n in nodes if n.name == "hello_world")
@@ -32,9 +36,12 @@ class MyClass:
     method_node = next(n for n in nodes if n.name == "method")
     assert method_node.kind == "function"
 
-    # Check Edges (MyClass defines method)
-    assert len(edges) == 1
-    edge = edges[0]
-    assert edge.from_node_id == class_node.id
-    assert edge.to_node_id == method_node.id
-    assert edge.relation_type == "defines"
+    # Check Edges (File defines hello_world and MyClass, MyClass defines method)
+    assert len(edges) == 3
+    
+    # helper to find edges
+    has_edge = lambda f, t: any(e.from_node_id == f and e.to_node_id == t for e in edges)
+    
+    assert has_edge(module_node.id, func_node.id)
+    assert has_edge(module_node.id, class_node.id)
+    assert has_edge(class_node.id, method_node.id)

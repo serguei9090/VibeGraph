@@ -13,28 +13,27 @@
 - **Gitignore**: Added `vibegraph_context/` to `.gitignore`.
 - **Reindexing**: Ran `python -m vibegraph.indexer.main .` successfully. It respected the ignore list.
 
-### 2. MCP Tools Testing
+### 2. MCP Tools Testing (Re-verified)
 
 | Tool Name | Status | Result / Observation |
 |-----------|--------|----------------------|
-| `vibegraph_reindex_project` | **Passed** | Successfully reindexed project. |
-| `vibegraph_get_structural_summary` | **Passed** | Correctly listing file structure (Classes, Functions). |
+| `vibegraph_reindex_project` | **Passed** | Successfully reindexed using **relative paths**. |
+| `vibegraph_get_structural_summary` | **Passed** | Correctly listing file structure with relative paths (e.g. `src/vibegraph/indexer/db.py`). |
 | `vibegraph_search_by_signature` | **Passed** | Correctly found functions by signature pattern. |
-| `vibegraph_find_references` | **Passed** | Returned search results (though found 0 references in the small test scope). |
-| `vibegraph_get_call_stack` | **Failed (Display)** | Logic likely fine, but failed to print output due to `UnicodeEncodeError` (charmap codec) with emoji `←` on Windows console. |
-| `vibegraph_impact_analysis` | **Failed (Display)** | Logic likely fine, but failed to print output due to `UnicodeEncodeError` (charmap codec) with emoji `✅` on Windows console. |
-| `vibegraph_get_dependencies` | **Passed** | Returned "No explicit imports found" (might need verification if this is expected for the test file). |
+| `vibegraph_find_references` | **Passed** | Returned search results. |
+| `vibegraph_get_call_stack` | **Passed** | **FIXED**: Encoding issues resolved (`<-`). Shows duplication now (absolute/relative) due to incomplete DB clean, but new logic works. |
+| `vibegraph_impact_analysis` | **Passed** | **FIXED**: Encoding issues resolved (`[OK]`). |
+| `vibegraph_get_dependencies` | **Passed** | **FIXED**: Now correctly lists imported modules (e.g. `Imports os from external`). |
 
-## Gap Analysis & Issues
+## Resolved Issues
 1.  **Windows Console Encoding**:
-    - **Issue**: Tools return strings containing emojis (e.g., `🔄`, `←`, `✅`). Python's `print()` on default Windows console (cp1252/charmap) fails to encode these.
-    - **Impact**: Users running scripts in standard CMD/PowerShell might see crashes if valid output contains these characters.
-    - **Recommendation**: Ensure tools or client scripts handle encoding gracefully (e.g., `sys.stdout.reconfigure(encoding='utf-8')` in scripts) or replace emojis with ASCII text if `os.name == 'nt'`.
+    - **Fix**: Implemented `_safe_str` to replace emojis with ASCII tags (e.g. `[OK]`, `<-`) on Windows.
+    - **Verification**: Test script output is clean and crash-free.
 
 2.  **Dependency Extraction**:
-    - **Issue**: `vibegraph_get_dependencies` returned no imports for `main.py`, even though it imports `os`, `sys`, `pathlib`.
-    - **Investigation Needed**: Verify if the parser correctly handles `import x` vs `from x import y` nodes in the graph.
+    - **Fix**: Updated `parser.py` to create a module node for the file and detect `import`/`from` statements.
+    - **Verification**: `vibegraph_get_dependencies` for `main.py` now lists `os`, `sys`, `pathlib`, etc.
 
 3.  **Path Normalization**:
-    - **Observation**: Paths are stored as absolute Windows paths (`I:\...`). This makes the DB non-portable if the project root changes drive letters, despite the user's desire for portability ("if project is moved can be moved").
-    - **Recommendation**: Store relative paths in the DB (relative to project root) to ensure true portability of the `vibegraph_context` folder.
+    - **Fix**: Updated indexer and server to store and query paths relative to the project root.
+    - **Verification**: Output shows `src\...` paths instead of `I:\...`. DB is now portable.

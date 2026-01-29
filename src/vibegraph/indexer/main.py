@@ -11,22 +11,30 @@ from vibegraph.indexer.parser import ParserFactory
 def index_file(db: IndexerDB, file_path: str, verbose: bool = True):
     """Index a single file."""
     try:
-        abs_path = str(Path(file_path).resolve())
-        parser = ParserFactory.get_parser(abs_path)
+        abs_path = Path(file_path).resolve()
+        try:
+            # Store relative paths for portability
+            rel_path = str(abs_path.relative_to(Path.cwd()))
+        except ValueError:
+            # Fallback if outside current working directory
+            rel_path = str(abs_path)
+
+        parser = ParserFactory.get_parser(rel_path)
         if not parser:
             if verbose:
                 print(f"Skipping {file_path} (unsupported language)")
             return
 
+        # Read using abs_path but index using rel_path
         with open(abs_path, "rb") as f:
             source_code = f.read()
 
         if verbose:
-            print(f"Indexing {file_path}...")
-        nodes, edges = parser.extract(abs_path, source_code)
+            print(f"Indexing {rel_path}...")
+        nodes, edges = parser.extract(rel_path, source_code)
 
         # Clear old data for this file
-        db.clear_file(abs_path)
+        db.clear_file(rel_path)
 
         # Insert new data
         for node in nodes:

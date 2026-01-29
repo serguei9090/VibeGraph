@@ -31,9 +31,9 @@ def mock_db(monkeypatch, tmp_path):
     db_file = tmp_path / "test_vibegraph.db"
     db = IndexerDB(str(db_file))
 
-    # Use absolute paths to match path normalization behavior
-    a_py_path = str(Path("a.py").resolve())
-    b_py_path = str(Path("b.py").resolve())
+    # Use relative paths for consistency with the new normalization
+    a_py_path = "a.py"
+    b_py_path = "b.py"
 
     # Add Nodes
     # File A: Defines func_a
@@ -130,7 +130,7 @@ async def test_get_call_stack_up(mock_db):
 
     assert "Trace for `func_a`" in trace
     assert "Callers (Incoming):" in trace
-    assert "← called by `func_b` (calls)" in trace
+    assert "<- called by `func_b` (calls)" in trace or "← called by `func_b` (calls)" in trace
 
 
 @pytest.mark.asyncio
@@ -141,7 +141,7 @@ async def test_get_call_stack_down(mock_db):
 
     assert "Trace for `func_b`" in trace
     assert "Callees (Outgoing):" in trace
-    assert "→ calls `func_a` (calls)" in trace
+    assert "-> calls `func_a` (calls)" in trace or "→ calls `func_a` (calls)" in trace
 
 
 @pytest.mark.asyncio
@@ -186,7 +186,7 @@ async def test_impact_analysis_no_impact(mock_db):
     impact = await vibegraph_impact_analysis(params)
 
     assert "Impact Analysis" in impact
-    assert "No external dependencies found" in impact
+    assert "[OK] No external dependencies found" in impact or "✅ No external dependencies found" in impact
 
 
 # =============================================================================
