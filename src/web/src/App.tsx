@@ -110,6 +110,7 @@ export default function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Interaction State
   const [filter, setFilter] = useState('');
@@ -124,7 +125,10 @@ export default function App() {
   const applyLayoutAndFilters = useCallback(() => {
     const { nodes: rawNodes, edges: rawEdges } = rawData.current;
 
-    if (rawNodes.length === 0) return;
+    if (rawNodes.length === 0) {
+      console.warn("No nodes in raw data");
+      return;
+    }
 
     // 1. Filter Nodes by Type
     let filteredNodes = rawNodes.filter(n => activeFilters.has(n.kind));
@@ -176,25 +180,45 @@ export default function App() {
     }));
 
     // 4. Apply Dagre Layout
-    const { nodes: layoutNodes, edges: layoutEdges } = getLayoutedElements(
-      flowNodes,
-      flowEdges
-    );
+    try {
+      const { nodes: layoutNodes, edges: layoutEdges } = getLayoutedElements(
+        flowNodes,
+        flowEdges
+      );
 
-    setNodes(layoutNodes);
-    setEdges(layoutEdges);
+      setNodes(layoutNodes);
+      setEdges(layoutEdges);
+    } catch (layoutError) {
+      console.error("Layout Error:", layoutError);
+      setError("Layout failed (Dagre error). Check console.");
+    }
   }, [activeFilters, filter, setNodes, setEdges]);
 
 
   const fetchGraph = async () => {
     setLoading(true);
+    setError(null);
     try {
+      console.log(`Fetching graph from ${API_URL}/graph...`);
       const res = await axios.get(`${API_URL}/graph`);
+      console.log("Graph data received:", res.data);
+
+      if (!res.data || !res.data.nodes) {
+        setError("Invalid data format received from API");
+        return;
+      }
+
       rawData.current = res.data;
       setLastUpdate(new Date().toLocaleTimeString());
-      applyLayoutAndFilters();
-    } catch (err) {
+
+      if (res.data.nodes.length === 0) {
+        setError("Database is empty. Did you run the indexer?");
+      } else {
+        applyLayoutAndFilters();
+      }
+    } catch (err: any) {
       console.error("Failed to fetch graph", err);
+      setError(err.message || "Failed to fetch graph");
     } finally {
       setLoading(false);
     }
@@ -269,7 +293,7 @@ export default function App() {
         </button>
 
         <div className="stats-panel">
-          <Layers size={14} /> <span>{nodes.length} Nodes</span>
+          <Layers size={14} /> <span>{nodes.length > 0 ? nodes.length : (rawData.current?.nodes?.length || 0)} Nodes</span>
           <div style={{ width: 1, height: 16, background: 'var(--border-color)' }}></div>
           <Code size={14} /> <span>{edges.length} Edges</span>
           <div style={{ width: 1, height: 16, background: 'var(--border-color)' }}></div>
@@ -290,8 +314,68 @@ export default function App() {
         <Controls />
         <Background color="#1a1b23" gap={20} size={1} />
 
+        {/* Loading Overlay */}
+        {loading && (
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            background: 'rgba(26, 27, 35, 0.8)',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 20,
+            backdropFilter: 'blur(4px)',
+            color: '#fff'
+          }}>
+            <RefreshCw size={48} className="spin" style={{ color: '#6366f1', marginBottom: 16 }} />
+            <div style={{ fontSize: '18px', fontWeight: 600 }}>Syncing VibeGraph...</div>
+            <div style={{ fontSize: '14px', opacity: 0.6, marginTop: 4 }}>Parsing AST & building relationships</div>
+          </div>
+        )}
+
+        {/* Error Overlay */}
+        {error && (
+          <div style={{
+            position: 'absolute',
+            top: 20,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(239, 68, 68, 0.9)',
+            color: 'white',
+            padding: '12px 24px',
+            borderRadius: '8px',
+            zIndex: 30,
+            backdropFilter: 'blur(4px)',
+            border: '1px solid rgba(255,255,255,0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12
+          }}>
+            <div style={{ fontWeight: 600 }}>Error:</div>
+            <div>{error}</div>
+            <button
+              onClick={() => fetchGraph()}
+              style={{
+                background: 'rgba(255,255,255,0.2)',
+                border: 'none',
+                borderRadius: 4,
+                padding: '4px 8px',
+                color: 'white',
+                cursor: 'pointer',
+                marginLeft: 12
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
         {/* Filter Panel */}
-        <Panel position="top-right" className="glass-panel" style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <Panel position="top-right" className="glass-panel" style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: 8, marginTop: '80px' }}>
           <div style={{ fontSize: '12px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
             <Filter size={12} /> Filters
           </div>
