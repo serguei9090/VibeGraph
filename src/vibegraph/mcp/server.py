@@ -1,6 +1,7 @@
 from mcp.server.fastmcp import FastMCP
 from typing import Literal, Set, List, Dict, Any
 import sys
+from pathlib import Path
 from contextlib import redirect_stdout
 from vibegraph.indexer.db import IndexerDB
 from vibegraph.indexer.main import reindex_all
@@ -10,23 +11,28 @@ mcp = FastMCP("VibeGraph")
 def _get_db() -> IndexerDB:
     return IndexerDB()
 
+def _normalize_path(file_path: str) -> str:
+    """Normalize file path to match DB storage format (absolute, resolved)."""
+    return str(Path(file_path).resolve())
+
 @mcp.tool()
 def get_structural_summary(file_path: str) -> str:
     """
     Get a concise structural summary of a file (classes, functions, methods).
     """
+    normalized_path = _normalize_path(file_path)
     db = _get_db()
     with db._get_conn() as conn:
         cursor = conn.execute(
             "SELECT name, kind, signature, start_line, end_line FROM nodes WHERE file_path = ? ORDER BY start_line", 
-            (file_path,)
+            (normalized_path,)
         )
         rows = cursor.fetchall()
     
     if not rows:
         return f"No structure schema found for {file_path} (File might not be indexed)."
 
-    summary = [f"Structure for {file_path}:"]
+    summary = [f"Structure for {normalized_path}:"]
     for row in rows:
         prefix = "- "
         info = f"{prefix}[{row['kind']}] {row['name']}"
@@ -88,7 +94,7 @@ def get_call_stack(node_name: str, file_path: str | None = None, direction: str 
         params = [node_name]
         if file_path:
             query += " AND file_path = ?"
-            params.append(file_path)
+            params.append(_normalize_path(file_path))
             
         cursor = conn.execute(query, tuple(params))
         start_nodes = cursor.fetchall()
@@ -118,15 +124,16 @@ def impact_analysis(file_path: str) -> str:
     """
     Analyze what other files/functions break if this file is modified.
     """
+    normalized_path = _normalize_path(file_path)
     db = _get_db()
     with db._get_conn() as conn:
-        cursor = conn.execute("SELECT id, name FROM nodes WHERE file_path = ?", (file_path,))
+        cursor = conn.execute("SELECT id, name FROM nodes WHERE file_path = ?", (normalized_path,))
         file_nodes = cursor.fetchall()
         
         if not file_nodes:
             return f"No nodes found in {file_path}. Is it indexed?"
 
-        output = [f"## Impact Analysis for `{file_path}`"]
+        output = [f"## Impact Analysis for `{normalized_path}`"]
         output.append("If you modify this file, the following components depend on it:\n")
         
         total_impact = 0
@@ -138,7 +145,7 @@ def impact_analysis(file_path: str) -> str:
                 JOIN nodes n ON e.from_node_id = n.id
                 WHERE e.to_node_id = ? AND n.file_path != ?
             """
-            cursor = conn.execute(query, (node['id'], file_path))
+            cursor = conn.execute(query, (node['id'], normalized_path))
             dependents = cursor.fetchall()
             
             if dependents:
