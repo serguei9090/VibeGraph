@@ -149,5 +149,9 @@ def impact_analysis(file_path: str) -> str:
 
     return "\n".join(output)
 
-if __name__ == "__main__":
+def main():
+    """Entry point for the vibegraph-mcp console script."""
     mcp.run()
+
+if __name__ == "__main__":
+    main()

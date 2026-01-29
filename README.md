@@ -15,7 +15,7 @@ VibeGraph is a code intelligence system that treats your codebase as a **nervous
 ## Quick Start
 
 ### Prerequisites
-- Python 3.11+
+- Python 3.11 or 3.12 (Python 3.13+ not yet supported due to `tree-sitter-languages` compatibility)
 - Node.js 18+ (for frontend)
 - [`uv`](https://github.com/astral-sh/uv) package manager
 
@@ -66,26 +66,38 @@ To integrate VibeGraph with AI clients (Claude Desktop, Cline, etc.), add this t
 {
   "mcpServers": {
     "vibegraph": {
-      "command": "uv",
+      "command": "uvx",
       "args": [
-        "--directory",
-        "I:/01-Master_Code/Test-Labs/VibeGraph",
-        "run",
-        "python",
-        "-m",
-        "vibegraph.mcp.server"
+        "--from",
+        "git+https://github.com/serguei9090/vibegraph",
+        "vibegraph-mcp"
       ]
     }
   }
 }
 ```
 
-**For other MCP clients**, use the equivalent configuration format with:
-- **Command**: `uv`
-- **Args**: `--directory <path-to-vibegraph> run python -m vibegraph.mcp.server`
-- **Working Directory**: Your VibeGraph installation path
+**For local development** (using your local clone):
+```json
+{
+  "mcpServers": {
+    "vibegraph": {
+      "command": "uv",
+      "args": [
+        "--directory",
+        "I:/01-Master_Code/Test-Labs/VibeGraph",
+        "run",
+        "vibegraph-mcp"
+      ]
+    }
+  }
+}
+```
 
-> **Note**: Make sure to index your codebase first (`uv run python -m vibegraph.indexer.main .`) before querying via MCP.
+> **Note**: 
+> - Replace `YOUR_USERNAME/vibegraph` with your actual GitHub repository path
+> - Make sure to index your codebase first (`uv run python -m vibegraph.indexer.main .`) before querying via MCP
+> - The MCP server will only have access to the indexed database in the current directory
 
 ## Architecture
 
