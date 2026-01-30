@@ -1,6 +1,6 @@
-import urllib.request
 import json
 import sys
+import urllib.request
 
 try:
     print("Testing GET http://localhost:8000/graph ...")

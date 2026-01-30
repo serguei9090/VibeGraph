@@ -6,10 +6,15 @@ import pathspec
 
 from vibegraph.indexer.db import IndexerDB
 from vibegraph.indexer.parser import ParserFactory
+from vibegraph.indexer.resolver import ModuleResolver
 
 
 def index_file(
-    db: IndexerDB, file_path: str, project_root: Path | None = None, verbose: bool = True
+    db: IndexerDB,
+    file_path: str,
+    project_root: Path | None = None,
+    resolver: ModuleResolver | None = None,
+    verbose: bool = True,
 ):
     """Index a single file."""
     try:
@@ -27,7 +32,7 @@ def index_file(
             except ValueError:
                 rel_path = str(abs_path).replace("\\", "/")
 
-        parser = ParserFactory.get_parser(rel_path)
+        parser = ParserFactory.get_parser(rel_path, resolver=resolver)
         if not parser:
             if verbose:
                 print(f"Skipping {file_path} (unsupported language)")
@@ -88,10 +93,14 @@ def reindex_all(db: IndexerDB, target_path_str: str, verbose: bool = True):
     }
 
     spec = None
+    resolver = None
     if target_path.is_dir():
         spec = load_gitignore(target_path)
+        resolver = ModuleResolver(target_path)
 
     if target_path.is_file():
+        # For single file, try to find root to enable resolution if possible
+        # but often it's external, so resolver remains None
         index_file(db, str(target_path), project_root=target_path.parent, verbose=verbose)
     elif target_path.is_dir():
         for root, dirs, files in os.walk(target_path):
@@ -109,15 +118,17 @@ def reindex_all(db: IndexerDB, target_path_str: str, verbose: bool = True):
                     try:
                         rel_path = full_path.relative_to(target_path)
                         if spec.match_file(str(rel_path)):
-                            if verbose:
-                                # Optional: verify strictly necessary debug to avoid noise
-                                pass
                             continue
                     except ValueError:
-                        # Path not relative to target_path (shouldn't happen with walk)
                         pass
 
-                index_file(db, str(full_path), project_root=target_path, verbose=verbose)
+                index_file(
+                    db,
+                    str(full_path),
+                    project_root=target_path,
+                    resolver=resolver,
+                    verbose=verbose,
+                )
     else:
         if verbose:
             print(f"Path not found: {target_path}")

@@ -5,6 +5,7 @@ This server provides tools to analyze and understand codebases through
 structural parsing (Tree-sitter) and a relational database (SQLite).
 """
 
+import json
 import os
 import sys
 from contextlib import redirect_stdout
@@ -256,10 +257,14 @@ class GraphTraverser:
         direction: Literal["up", "down"],
         indent: int,
         conn,
+        path_stack: list[str] | None = None,
     ):
         """Recursively traverse the graph."""
         if depth > max_depth:
             return
+
+        if path_stack is None:
+            path_stack = []
 
         # Check for cycles
         if current_id in self.visited:
@@ -290,12 +295,17 @@ class GraphTraverser:
         neighbors = cursor.fetchall()
 
         for n in neighbors:
+            current_path = [*path_stack, n["name"]]
+            breadcrumb = " > ".join(current_path)
+
             line = (
-                f"{'  ' * indent}- {prefix} `{n['name']}` ({n['relation_type']}) "
+                f"{'  ' * indent}- {prefix} `{breadcrumb}` ({n['relation_type']}) "
                 f"in `{n['file_path']}`"
             )
             self.output.append(line)
-            self.traverse(n["neighbor_id"], depth + 1, max_depth, direction, indent + 1, conn)
+            self.traverse(
+                n["neighbor_id"], depth + 1, max_depth, direction, indent + 1, conn, current_path
+            )
 
 
 # =============================================================================
@@ -374,7 +384,7 @@ async def vibegraph_get_structural_summary(params: StructuralSummaryInput) -> st
 
             # Get paginated results
             cursor = conn.execute(
-                """SELECT id, name, kind, signature, start_line, end_line 
+                """SELECT id, name, kind, signature, start_line, end_line, decorators, visibility 
                    FROM nodes 
                    WHERE file_path = ? 
                    ORDER BY start_line
@@ -391,8 +401,6 @@ async def vibegraph_get_structural_summary(params: StructuralSummaryInput) -> st
 
         # JSON format
         if params.response_format == ResponseFormat.JSON:
-            import json
-
             nodes = [
                 {
                     "name": row["name"],
@@ -400,6 +408,8 @@ async def vibegraph_get_structural_summary(params: StructuralSummaryInput) -> st
                     "signature": row["signature"],
                     "start_line": row["start_line"],
                     "end_line": row["end_line"],
+                    "decorators": json.loads(row["decorators"]) if row["decorators"] else [],
+                    "visibility": row["visibility"] or "public",
                 }
                 for row in rows
             ]
@@ -424,10 +434,30 @@ async def vibegraph_get_structural_summary(params: StructuralSummaryInput) -> st
         ]
 
         for row in rows:
-            info = f"- [{row['kind']}] **{row['name']}**"
+            icon = "[f]"
+            if row["kind"] == "class":
+                icon = "[c]"
+            elif row["kind"] == "module":
+                icon = "[m]"
+
+            vis_mark = ""
+            if row["visibility"] == "private":
+                vis_mark = " 🔒"
+            elif row["visibility"] == "exported":
+                vis_mark = " 🌐"
+
+            decorators = ""
+            if row["decorators"]:
+                decs = json.loads(row["decorators"])
+                for d in decs:
+                    decorators += f"\n  {d}"
+
+            info = f"- {icon} **{row['name']}**{vis_mark}"
             if row["signature"]:
-                info += f"`{row['signature']}`"
+                info += f" `{row['signature']}`"
             info += f" (L{row['start_line']}-{row['end_line']})"
+            if decorators:
+                info += decorators
             summary.append(info)
 
         if end_idx < total:
@@ -509,14 +539,30 @@ async def vibegraph_get_call_stack(params: CallStackInput) -> str:
 
                 if params.direction in (TraceDirection.UP, TraceDirection.BOTH):
                     traverser.output.append("\n**Callers (Incoming):**")
-                    traverser.traverse(start_node["id"], 1, params.depth, "up", 0, conn)
+                    traverser.traverse(
+                        start_node["id"],
+                        1,
+                        params.depth,
+                        "up",
+                        0,
+                        conn,
+                        path_stack=[start_node["name"]],
+                    )
                     if not any(_safe_str("←") in line for line in traverser.output[-5:]):
                         traverser.output.append("  (no callers found)")
                     traverser.visited.clear()
 
                 if params.direction in (TraceDirection.DOWN, TraceDirection.BOTH):
                     traverser.output.append("\n**Callees (Outgoing):**")
-                    traverser.traverse(start_node["id"], 1, params.depth, "down", 0, conn)
+                    traverser.traverse(
+                        start_node["id"],
+                        1,
+                        params.depth,
+                        "down",
+                        0,
+                        conn,
+                        path_stack=[start_node["name"]],
+                    )
                     if not any(_safe_str("→") in line for line in traverser.output[-5:]):
                         traverser.output.append("  (no callees found)")
 
@@ -577,34 +623,77 @@ async def vibegraph_impact_analysis(params: ImpactAnalysisInput) -> str:
             if not file_nodes:
                 return f"No nodes found in {params.file_path}. Is it indexed?"
 
-            output = [f"## Impact Analysis for `{normalized_path}`"]
-            output.append("If you modify this file, the following components depend on it:\n")
+            # BFS for transitive impact
+            # Queue: (node_id, depth, path_description)
+            queue = [(n["id"], 0, n["name"]) for n in file_nodes]
+            visited = {n["id"] for n in file_nodes}
 
+            # Storage for results: level -> list of strings
+            impacts_by_level = {1: [], 2: [], 3: []}
             total_impact = 0
 
-            for node in file_nodes:
+            while queue:
+                curr_id, depth, path_desc = queue.pop(0)
+
+                if depth >= 3:
+                    continue
+
+                # dependencies: who calls/uses curr_id?
                 query = """
-                    SELECT DISTINCT n.file_path, n.name, e.relation_type
+                    SELECT DISTINCT n.id, n.name, n.file_path, n.kind, e.relation_type
                     FROM edges e
                     JOIN nodes n ON e.from_node_id = n.id
-                    WHERE e.to_node_id = ? AND n.file_path != ?
+                    WHERE e.to_node_id = ?
                 """
-                cursor = conn.execute(query, (node["id"], normalized_path))
+                cursor = conn.execute(query, (curr_id,))
                 dependents = cursor.fetchall()
 
-                if dependents:
-                    output.append(f"- **`{node['name']}`** is used by:")
-                    for dep in dependents:
-                        output.append(
-                            f"  - `{dep['name']}` in `{dep['file_path']}` ({dep['relation_type']})"
-                        )
-                    total_impact += len(dependents)
+                for dep in dependents:
+                    # Avoid cycles and self-references within the same original file
+                    if dep["id"] in visited:
+                        continue
+
+                    # We only care about external impact for the report, but we traverse everything
+                    # to find transitive impacts.
+
+                    next_depth = depth + 1
+
+                    if dep["file_path"] != normalized_path:
+                        # It's an external impact
+                        if next_depth <= 3:
+                            entry = (
+                                f"- **`{dep['name']}`** (`{dep['file_path']}`) "
+                                f"depends on `{path_desc}` via `{dep['relation_type']}`"
+                            )
+                            impacts_by_level[next_depth].append(entry)
+                            total_impact += 1
+
+                    visited.add(dep["id"])
+                    queue.append((dep["id"], next_depth, dep["name"]))
+
+            output = [f"## Impact Analysis for `{normalized_path}`"]
 
             if total_impact == 0:
-                msg = _safe_str("✅ No external dependencies found. Safe to refactor internally.")
-                output.append(msg)
+                output.append("✅ No external dependencies found. Safe to refactor internally.")
             else:
-                output.append(f"\n**Total Impact**: {total_impact} dependent components")
+                output.append(
+                    f"**Total Impact**: {total_impact} components affected up to 3 levels.\n"
+                )
+
+                if impacts_by_level[1]:
+                    output.append("### Level 1: Direct Impact")
+                    output.extend(sorted(set(impacts_by_level[1])))
+                    output.append("")
+
+                if impacts_by_level[2]:
+                    output.append("### Level 2: Secondary Impact (Ripple Effect)")
+                    output.extend(sorted(set(impacts_by_level[2])))
+                    output.append("")
+
+                if impacts_by_level[3]:
+                    output.append("### Level 3: Deep Impact")
+                    output.extend(sorted(set(impacts_by_level[3])))
+                    output.append("")
 
         return "\n".join(output)
 
@@ -707,11 +796,7 @@ async def vibegraph_get_dependencies(params: DependenciesInput) -> str:
         normalized_path = _normalize_path(params.file_path, root)
 
         with db._get_conn() as conn:
-            # Find nodes in this file, then check their outgoing import edges?
-            # Actually import edges usually link from a file-scope/module node OR
-            # generic nodes in that file.
-
-            # Let's query outgoing edges from ANY node in this file having relation 'imports'
+            # Get outgoing import edges
             query = """
                 SELECT DISTINCT n_to.name, n_to.file_path, n_to.kind
                 FROM nodes n_from
@@ -723,14 +808,63 @@ async def vibegraph_get_dependencies(params: DependenciesInput) -> str:
             cursor = conn.execute(query, (normalized_path,))
             deps = cursor.fetchall()
 
+            # stdlib check
+            try:
+                import sys
+
+                stdlib_names = sys.stdlib_module_names
+            except Exception:
+                stdlib_names = {
+                    "os",
+                    "sys",
+                    "pathlib",
+                    "json",
+                    "typing",
+                    "subprocess",
+                    "hashlib",
+                    "re",
+                    "math",
+                    "datetime",
+                    "sqlite3",
+                    "abc",
+                }
+
+            internal = []
+            stdlib = []
+            third_party = []
+
+            for dep in deps:
+                name = dep["name"]
+                path = dep["file_path"]
+
+                if path != "external":
+                    internal.append(dep)
+                else:
+                    root_pkg = name.split(".")[0]
+                    if root_pkg in stdlib_names:
+                        stdlib.append(dep)
+                    else:
+                        third_party.append(dep)
+
             output = [f"## Dependencies for `{normalized_path}`"]
-            if not deps:
+
+            if internal:
+                output.append("\n### 🏠 Internal Project Modules")
+                for dep in internal:
+                    output.append(f"- **{dep['name']}** (`{dep['file_path']}`)")
+
+            if third_party:
+                output.append("\n### 📦 Third-Party Packages")
+                for dep in third_party:
+                    output.append(f"- **{dep['name']}**")
+
+            if stdlib:
+                output.append("\n### 🐍 Standard Library")
+                for dep in stdlib:
+                    output.append(f"- {dep['name']}")
+
+            if not (internal or third_party or stdlib):
                 output.append("No explicit imports found in index.")
-            else:
-                for dep in deps:
-                    output.append(
-                        f"- Imports `{dep['name']}` ({dep['kind']}) from `{dep['file_path']}`"
-                    )
 
         return "\n".join(output)
     except Exception as e:

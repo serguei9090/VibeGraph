@@ -7,7 +7,9 @@ CREATE TABLE IF NOT EXISTS nodes (
     start_line INTEGER,
     end_line INTEGER,
     signature TEXT,                -- The code signature for quick reference
-    docstring TEXT                 -- Extracted comments for semantic context
+    docstring TEXT,                -- Extracted comments for semantic context
+    decorators TEXT,               -- JSON list of decorators (e.g. ["@mcp.tool"])
+    visibility TEXT                -- 'public', 'private', 'protected', 'exported'
 );
 
 -- Represents "Neural Connections" (Calls, Imports, Inheritance)

@@ -1,5 +1,6 @@
 import hashlib
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any
 
 from tree_sitter import Language, Node, Parser, Tree
@@ -7,12 +8,14 @@ from tree_sitter_languages import get_language, get_parser
 
 from vibegraph.indexer.db import Edge
 from vibegraph.indexer.db import Node as DBNode
+from vibegraph.indexer.resolver import ModuleResolver
 
 
 class LanguageParser(ABC):
-    def __init__(self, language_name: str):
+    def __init__(self, language_name: str, resolver: ModuleResolver | None = None):
         self.language: Language = get_language(language_name)
         self.parser: Parser = get_parser(language_name)
+        self.resolver = resolver
 
     def parse(self, source_code: bytes) -> Tree:
         return self.parser.parse(source_code)
@@ -23,8 +26,11 @@ class LanguageParser(ABC):
             return ""
         return node.text.decode("utf-8")
 
-    def _get_id(self, file_path: str, name: str) -> str:
+    def _get_id(self, file_path: str, name: str, kind: str | None = None) -> str:
         """Generate a unique ID for a node."""
+        if kind == "module":
+            # Modules are identified by their canonical name across the project
+            return hashlib.md5(f"module::{name}".encode()).hexdigest()
         return hashlib.md5(f"{file_path}::{name}".encode()).hexdigest()
 
     def _create_node(
@@ -33,20 +39,26 @@ class LanguageParser(ABC):
         name: str,
         kind: Any,
         file_path: str,
-        node: Node,
+        node: Node | None,  # Changed to allow None for virtual nodes
         signature: str | None = None,
         docstring: str | None = None,
+        decorators: list[str] | None = None,
+        visibility: str | None = None,
     ) -> DBNode:
         """Create a DBNode with common fields."""
+        start_line = node.start_point[0] + 1 if node else 0
+        end_line = node.end_point[0] + 1 if node else 0
         return DBNode(
             id=node_id,
             name=name,
             kind=kind,
             file_path=file_path,
-            start_line=node.start_point[0] + 1,
-            end_line=node.end_point[0] + 1,
+            start_line=start_line,
+            end_line=end_line,
             signature=signature,
             docstring=docstring,
+            decorators=decorators,
+            visibility=visibility,
         )
 
     def _create_edge(self, from_id: str, to_id: str, relation: Any = "defines") -> Edge:
@@ -59,9 +71,19 @@ class LanguageParser(ABC):
         pass
 
 
+@dataclass
+class ParserContext:
+    file_path: str
+    nodes: list[DBNode]
+    edges: list[Edge]
+    file_module_id: str
+
+
 class PythonParser(LanguageParser):
-    def __init__(self):
-        super().__init__("python")
+    """Parser for Python files."""
+
+    def __init__(self, resolver: ModuleResolver | None = None):
+        super().__init__("python", resolver)
 
     def _extract_docstring(self, node: Node) -> str | None:
         body_node = node.child_by_field_name("body")
@@ -88,105 +110,159 @@ class PythonParser(LanguageParser):
         edges: list[Edge] = []
 
         # Create a node for the file itself (module)
-        file_name = file_path.split("/")[-1]  # Simple basename
-        file_module_id = self._get_id(file_path, file_name)
-        # Create a node for the whole file/module
-        # We use the root node of the tree for location info
+        module_name = file_path.split("/")[-1].replace(".py", "")
+        if self.resolver:
+            canonical = self.resolver.get_module_name(file_path)
+            if canonical:
+                module_name = canonical
+
+        file_module_id = self._get_id(file_path, module_name, kind="module")
         nodes.append(
-            self._create_node(file_module_id, file_name, "module", file_path, tree.root_node)
+            self._create_node(file_module_id, module_name, "module", file_path, tree.root_node)
         )
 
-        def traverse(node: Node, parent_id: str | None = None):
-            node_id = None
+        ctx = ParserContext(file_path, nodes, edges, file_module_id)
+        self._traverse(tree.root_node, file_module_id, ctx)
 
-            # 1. Definitions
-            if node.type in ("function_definition", "class_definition"):
-                name_node = node.child_by_field_name("name")
-                if name_node:
-                    name = self._get_text(name_node)
-                    node_id = self._get_id(file_path, name)
-                    kind = "function" if node.type == "function_definition" else "class"
-
-                    params_node = node.child_by_field_name("parameters")
-                    signature = self._get_text(params_node) if params_node else None
-                    docstring = self._extract_docstring(node)
-
-                    nodes.append(
-                        self._create_node(
-                            node_id, name, kind, file_path, node, signature, docstring
-                        )
-                    )
-
-                    if parent_id:
-                        edges.append(
-                            Edge(
-                                from_node_id=parent_id, to_node_id=node_id, relation_type="defines"
-                            )
-                        )
-
-            # 2. Function Calls
-            if parent_id and node.type == "call":
-                func_node = node.child_by_field_name("function")
-                if func_node:
-                    # Handle simple calls like foo() or obj.method()
-                    called_name = self._get_text(func_node)
-                    if "." in called_name:
-                        called_name = called_name.split(".")[-1]  # Simple heuristic for method name
-
-                    # Simplification for VibeGraph v1 (as per plan):
-                    # We will create a "call" edge from parent_id to a new node representing
-                    # the CALLED function.
-                    # pass
-                    pass
-
-            # 3. Imports
-            if node.type in ("import_statement", "import_from_statement"):
-                if node.type == "import_statement":
-                    for child in node.children:
-                        if child.type == "dotted_name":
-                            module_name = self._get_text(child)
-                            # External modules don't have a file path yet
-                            module_id = self._get_id("external", module_name)
-
-                            # Create a virtual node for external module (idempotent if same ID)
-                            nodes.append(
-                                self._create_node(
-                                    module_id, module_name, "module", "external", node
-                                )
-                            )
-
-                            # Link file -> external module
-                            # Use file_module_id as source
-                            edges.append(self._create_edge(file_module_id, module_id, "imports"))
-
-                elif node.type == "import_from_statement":
-                    module_node = node.child_by_field_name("module_name")
-                    if module_node:
-                        module_name = self._get_text(module_node)
-                        module_id = self._get_id("external", module_name)
-
-                        nodes.append(
-                            self._create_node(module_id, module_name, "module", "external", node)
-                        )
-                        edges.append(self._create_edge(file_module_id, module_id, "imports"))
-
-            # Recurse
-            # If we created a node (`node_id`), it becomes the scope for children.
-            # If not, we pass the current `parent_id`.
-            current_scope_id = node_id if node_id else parent_id
-            for child in node.children:
-                traverse(child, current_scope_id)
-
-        # Start traversal with the file module as the parent
-        traverse(tree.root_node, file_module_id)
         return nodes, edges
+
+    def _traverse(
+        self,
+        node: Node,
+        parent_id: str | None,
+        ctx: ParserContext,
+        decorators: list[str] | None = None,
+    ):
+        # Special handling for decorated definitions
+        if node.type == "decorated_definition":
+            self._handle_decorated(node, parent_id, ctx)
+            return
+
+        node_id = None
+
+        # 1. Definitions
+        if node.type in ("function_definition", "class_definition"):
+            node_id = self._handle_definition(node, parent_id, ctx, decorators)
+
+        # 2. Calls
+        elif parent_id and node.type == "call":
+            self._handle_call(node, parent_id, ctx)
+
+        # 3. Imports
+        elif node.type in ("import_statement", "import_from_statement"):
+            self._handle_import(node, ctx)
+
+        # Recurse
+        current_scope_id = node_id if node_id else parent_id
+        for child in node.children:
+            self._traverse(child, current_scope_id, ctx)
+
+    def _handle_decorated(self, node: Node, parent_id: str | None, ctx: ParserContext):
+        current_decorators = []
+        def_node = None
+        for child in node.children:
+            if child.type == "decorator":
+                current_decorators.append(self._get_text(child))
+            elif child.type in ("function_definition", "class_definition"):
+                def_node = child
+
+        if def_node:
+            self._traverse(def_node, parent_id, ctx, current_decorators)
+
+    def _handle_definition(
+        self, node: Node, parent_id: str | None, ctx: ParserContext, decorators: list[str] | None
+    ) -> str | None:
+        name_node = node.child_by_field_name("name")
+        if not name_node:
+            return None
+
+        name = self._get_text(name_node)
+        node_id = self._get_id(ctx.file_path, name)
+        kind = "function" if node.type == "function_definition" else "class"
+
+        params_node = node.child_by_field_name("parameters")
+        signature = self._get_text(params_node) if params_node else None
+        docstring = self._extract_docstring(node)
+
+        # Determine visibility
+        visibility = "public"
+        if name.startswith("_") and not name.startswith("__"):
+            visibility = "private"
+
+        ctx.nodes.append(
+            self._create_node(
+                node_id,
+                name,
+                kind,
+                ctx.file_path,
+                node,
+                signature,
+                docstring,
+                decorators=decorators,
+                visibility=visibility,
+            )
+        )
+
+        if parent_id:
+            ctx.edges.append(
+                Edge(from_node_id=parent_id, to_node_id=node_id, relation_type="defines")
+            )
+        return node_id
+
+    def _handle_call(self, node: Node, parent_id: str, ctx: ParserContext):
+        func_node = node.child_by_field_name("function")
+        if func_node:
+            called_name = self._get_text(func_node)
+            target_id = self._get_id(ctx.file_path, called_name)
+            ctx.edges.append(
+                Edge(from_node_id=parent_id, to_node_id=target_id, relation_type="calls")
+            )
+
+    def _handle_import(self, node: Node, ctx: ParserContext):
+        if node.type == "import_statement":
+            for child in node.children:
+                if child.type == "dotted_name":
+                    module_name = self._get_text(child)
+                    self._add_import_edge(module_name, node, ctx)
+                elif child.type == "aliased_import":
+                    name_node = child.child_by_field_name("name")
+                    if name_node:
+                        module_name = self._get_text(name_node)
+                        self._add_import_edge(module_name, node, ctx)
+
+        elif node.type == "import_from_statement":
+            module_name_node = node.child_by_field_name("module_name")
+            if module_name_node:
+                module_name = self._get_text(module_name_node)
+                # Handle `from . import foo` (relative imports)
+                # For now, we treat relative imports as part of the module name
+                self._add_import_edge(module_name, node, ctx)
+
+    def _add_import_edge(self, module_name: str, import_node: Node, ctx: ParserContext):
+        resolved_path = None
+        if self.resolver:
+            # The resolver should handle relative imports based on ctx.file_path
+            resolved_path = self.resolver.resolve(module_name, ctx.file_path)
+
+        module_path = resolved_path if resolved_path else "external"
+
+        module_id = self._get_id(module_path, module_name, kind="module")
+
+        # Check if this module node already exists to avoid duplicates
+        # This is a simple check, a more robust solution might involve a set of module_ids
+        if not any(n.id == module_id for n in ctx.nodes):
+            ctx.nodes.append(
+                self._create_node(module_id, module_name, "module", module_path, import_node)
+            )
+
+        ctx.edges.append(self._create_edge(ctx.file_module_id, module_id, "imports"))
 
 
 class JavaScriptParser(LanguageParser):
     """Parser for JavaScript and JSX files."""
 
-    def __init__(self):
-        super().__init__("javascript")
+    def __init__(self, resolver: ModuleResolver | None = None):
+        super().__init__("javascript", resolver)
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
         if not source_code.strip():
@@ -197,14 +273,26 @@ class JavaScriptParser(LanguageParser):
         edges: list[Edge] = []
 
         # Create a node for the file itself (module)
-        file_name = file_path.split("/")[-1]
-        file_module_id = self._get_id(file_path, file_name)
+        module_name = file_path.split("/")[-1]
+        if self.resolver:
+            canonical = self.resolver.get_module_name(file_path)
+            if canonical:
+                module_name = canonical
+
+        file_module_id = self._get_id(file_path, module_name, kind="module")
         nodes.append(
-            self._create_node(file_module_id, file_name, "module", file_path, tree.root_node)
+            self._create_node(file_module_id, module_name, "module", file_path, tree.root_node)
         )
 
-        def traverse(node: Node, parent_id: str | None = None):
+        def traverse(node: Node, parent_id: str | None = None, is_exported: bool = False):
+            # Check for export statement
+            if node.type == "export_statement":
+                for child in node.children:
+                    traverse(child, parent_id, is_exported=True)
+                return
+
             node_id = None
+            visibility = "exported" if is_exported else "internal"
 
             # Function declarations, arrow functions, class methods
             if node.type in (
@@ -222,7 +310,11 @@ class JavaScriptParser(LanguageParser):
                 params_node = node.child_by_field_name("parameters")
                 signature = self._get_text(params_node) if params_node else None
 
-                nodes.append(self._create_node(node_id, name, kind, file_path, node, signature))
+                nodes.append(
+                    self._create_node(
+                        node_id, name, kind, file_path, node, signature, visibility=visibility
+                    )
+                )
 
                 if parent_id:
                     edges.append(self._create_edge(parent_id, node_id))
@@ -234,7 +326,11 @@ class JavaScriptParser(LanguageParser):
                     name = self._get_text(name_node)
                     node_id = self._get_id(file_path, name)
 
-                    nodes.append(self._create_node(node_id, name, "class", file_path, node))
+                    nodes.append(
+                        self._create_node(
+                            node_id, name, "class", file_path, node, visibility=visibility
+                        )
+                    )
 
                     if parent_id:
                         edges.append(self._create_edge(parent_id, node_id))
@@ -282,7 +378,7 @@ class JavaScriptParser(LanguageParser):
 
             current_scope_id = node_id if node_id else parent_id
             for child in node.children:
-                traverse(child, current_scope_id)
+                traverse(child, current_scope_id, is_exported=is_exported)
 
         traverse(tree.root_node, file_module_id)
         return nodes, edges
@@ -291,8 +387,8 @@ class JavaScriptParser(LanguageParser):
 class TypeScriptParser(LanguageParser):
     """Parser for TypeScript and TSX files."""
 
-    def __init__(self, language="typescript"):
-        super().__init__(language)
+    def __init__(self, language="typescript", resolver: ModuleResolver | None = None):
+        super().__init__(language, resolver)
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
         if not source_code.strip():
@@ -303,14 +399,39 @@ class TypeScriptParser(LanguageParser):
         edges: list[Edge] = []
 
         # Create a node for the file itself (module)
-        file_name = file_path.split("/")[-1]
-        file_module_id = self._get_id(file_path, file_name)
+        module_name = file_path.split("/")[-1]
+        if self.resolver:
+            canonical = self.resolver.get_module_name(file_path)
+            if canonical:
+                module_name = canonical
+
+        file_module_id = self._get_id(file_path, module_name, kind="module")
         nodes.append(
-            self._create_node(file_module_id, file_name, "module", file_path, tree.root_node)
+            self._create_node(file_module_id, module_name, "module", file_path, tree.root_node)
         )
 
-        def traverse(node: Node, parent_id: str | None = None):
+        def traverse(
+            node: Node,
+            parent_id: str | None = None,
+            is_exported: bool = False,
+            decorators: list[str] | None = None,
+        ):
+            # Check for export statement in TS
+            if node.type == "export_statement":
+                # Handle exported declarations
+                for child in node.children:
+                    traverse(child, parent_id, is_exported=True)
+                return
+
+            # Decorators in TS
+            if node.type == "decorator":
+                # We often get decorators as siblings or children depending on structure,
+                # but standard TS grammar: (decorator) (class_declaration)
+                # This might need refinement based on exact tree-sitter-typescript grammar
+                pass
+
             node_id = None
+            visibility = "exported" if is_exported else "internal"
 
             # Function declarations, arrow functions, methods
             if node.type in (
@@ -329,7 +450,11 @@ class TypeScriptParser(LanguageParser):
                 params_node = node.child_by_field_name("parameters")
                 signature = self._get_text(params_node) if params_node else None
 
-                nodes.append(self._create_node(node_id, name, kind, file_path, node, signature))
+                nodes.append(
+                    self._create_node(
+                        node_id, name, kind, file_path, node, signature, visibility=visibility
+                    )
+                )
 
                 if parent_id:
                     edges.append(self._create_edge(parent_id, node_id))
@@ -342,7 +467,11 @@ class TypeScriptParser(LanguageParser):
                     node_id = self._get_id(file_path, name)
                     kind = "interface" if node.type == "interface_declaration" else "class"
 
-                    nodes.append(self._create_node(node_id, name, kind, file_path, node))
+                    nodes.append(
+                        self._create_node(
+                            node_id, name, kind, file_path, node, visibility=visibility
+                        )
+                    )
 
                     if parent_id:
                         edges.append(self._create_edge(parent_id, node_id))
@@ -407,8 +536,8 @@ class TypeScriptParser(LanguageParser):
 class GoParser(LanguageParser):
     """Parser for Go files."""
 
-    def __init__(self):
-        super().__init__("go")
+    def __init__(self, resolver: ModuleResolver | None = None):
+        super().__init__("go", resolver)
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
         if not source_code.strip():
@@ -419,10 +548,15 @@ class GoParser(LanguageParser):
         edges: list[Edge] = []
 
         # Create a node for the file itself (module)
-        file_name = file_path.split("/")[-1]
-        file_module_id = self._get_id(file_path, file_name)
+        module_name = file_path.split("/")[-1]
+        if self.resolver:
+            canonical = self.resolver.get_module_name(file_path)
+            if canonical:
+                module_name = canonical
+
+        file_module_id = self._get_id(file_path, module_name, kind="module")
         nodes.append(
-            self._create_node(file_module_id, file_name, "module", file_path, tree.root_node)
+            self._create_node(file_module_id, module_name, "module", file_path, tree.root_node)
         )
 
         def traverse(node: Node, parent_id: str | None = None):
@@ -471,8 +605,8 @@ class GoParser(LanguageParser):
 class RustParser(LanguageParser):
     """Parser for Rust files."""
 
-    def __init__(self):
-        super().__init__("rust")
+    def __init__(self, resolver: ModuleResolver | None = None):
+        super().__init__("rust", resolver)
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
         if not source_code.strip():
@@ -483,10 +617,15 @@ class RustParser(LanguageParser):
         edges: list[Edge] = []
 
         # Create a node for the file itself (module)
-        file_name = file_path.split("/")[-1]
-        file_module_id = self._get_id(file_path, file_name)
+        module_name = file_path.split("/")[-1]
+        if self.resolver:
+            canonical = self.resolver.get_module_name(file_path)
+            if canonical:
+                module_name = canonical
+
+        file_module_id = self._get_id(file_path, module_name, kind="module")
         nodes.append(
-            self._create_node(file_module_id, file_name, "module", file_path, tree.root_node)
+            self._create_node(file_module_id, module_name, "module", file_path, tree.root_node)
         )
 
         def traverse(node: Node, parent_id: str | None = None):
@@ -539,8 +678,8 @@ class RustParser(LanguageParser):
 class GenericParser(LanguageParser):
     """Generic parser for languages with basic function/class extraction."""
 
-    def __init__(self, language: str):
-        super().__init__(language)
+    def __init__(self, language: str, resolver: ModuleResolver | None = None):
+        super().__init__(language, resolver)
         self.language_name = language
 
     def extract(self, file_path: str, source_code: bytes) -> tuple[list[DBNode], list[Edge]]:
@@ -552,10 +691,15 @@ class GenericParser(LanguageParser):
         edges: list[Edge] = []
 
         # Create a node for the file itself (module)
-        file_name = file_path.split("/")[-1]
-        file_module_id = self._get_id(file_path, file_name)
+        module_name = file_path.split("/")[-1]
+        if self.resolver:
+            canonical = self.resolver.get_module_name(file_path)
+            if canonical:
+                module_name = canonical
+
+        file_module_id = self._get_id(file_path, module_name, kind="module")
         nodes.append(
-            self._create_node(file_module_id, file_name, "module", file_path, tree.root_node)
+            self._create_node(file_module_id, module_name, "module", file_path, tree.root_node)
         )
 
         # Common node types across C-like languages
@@ -619,27 +763,27 @@ class GenericParser(LanguageParser):
 
 class ParserFactory:
     @staticmethod
-    def get_parser(file_path: str) -> LanguageParser | None:
+    def get_parser(file_path: str, resolver: ModuleResolver | None = None) -> LanguageParser | None:
         if file_path.endswith(".py"):
-            return PythonParser()
+            return PythonParser(resolver)
         elif file_path.endswith((".js", ".jsx")):
-            return JavaScriptParser()
+            return JavaScriptParser(resolver)
         elif file_path.endswith(".ts"):
-            return TypeScriptParser("typescript")
+            return TypeScriptParser("typescript", resolver)
         elif file_path.endswith(".tsx"):
-            return TypeScriptParser("tsx")
+            return TypeScriptParser("tsx", resolver)
         elif file_path.endswith(".go"):
-            return GoParser()
+            return GoParser(resolver)
         elif file_path.endswith(".rs"):
-            return RustParser()
+            return RustParser(resolver)
         elif file_path.endswith(".java"):
-            return GenericParser("java")
+            return GenericParser("java", resolver)
         elif file_path.endswith((".c", ".h")):
-            return GenericParser("c")
+            return GenericParser("c", resolver)
         elif file_path.endswith((".cpp", ".cc", ".cxx", ".hpp")):
-            return GenericParser("cpp")
+            return GenericParser("cpp", resolver)
         elif file_path.endswith(".cs"):
-            return GenericParser("c_sharp")
+            return GenericParser("c_sharp", resolver)
         elif file_path.endswith(".rb"):
             return GenericParser("ruby")
         elif file_path.endswith(".php"):

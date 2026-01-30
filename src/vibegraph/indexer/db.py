@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any, Literal
@@ -16,6 +17,8 @@ class Node(BaseModel):
     end_line: int | None = None
     signature: str | None = None
     docstring: str | None = None
+    decorators: list[str] | None = None
+    visibility: str | None = None
 
 
 class Edge(BaseModel):
@@ -62,8 +65,9 @@ class IndexerDB:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO nodes (
-                    id, name, kind, file_path, start_line, end_line, signature, docstring
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    id, name, kind, file_path, start_line, end_line, signature, docstring,
+                    decorators, visibility
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     node.id,
@@ -74,6 +78,8 @@ class IndexerDB:
                     node.end_line,
                     node.signature,
                     node.docstring,
+                    json.dumps(node.decorators) if node.decorators else None,
+                    node.visibility,
                 ),
             )
             conn.commit()
