@@ -194,7 +194,10 @@ class ReindexInput(BaseModel):
 
     path: str = Field(
         default=".",
-        description="Path to index - file, directory, or '.' for project root",
+        description=(
+            "Absolute path to the project root, directory, or file "
+            "(Relative paths may fail context resolution)"
+        ),
     )
 
 
@@ -207,6 +210,10 @@ class ReferencesInput(BaseModel):
         ...,
         description="Name of the function/class/variable to find references for",
         min_length=1,
+    )
+    scope_path: str = Field(
+        default=".",
+        description="Project root or relevant path to scope the search context (defaults to CWD)",
     )
 
 
@@ -233,6 +240,10 @@ class SearchInput(BaseModel):
             "SQL pattern to search for in node signatures (e.g. '%List[str]%', 'async def%')"
         ),
         min_length=1,
+    )
+    scope_path: str = Field(
+        default=".",
+        description="Project root or relevant path to scope the search context (defaults to CWD)",
     )
 
 
@@ -725,8 +736,8 @@ async def vibegraph_find_references(params: ReferencesInput) -> str:
         str: Markdown list of usages with location info.
     """
     try:
-        # Since we don't have a path, we fall back to CWD to find the root
-        db, _ = _get_context_for_path(".")
+        # Use scope_path to determine project root/DB context
+        db, _ = _get_context_for_path(params.scope_path)
         with db._get_conn() as conn:
             # First find potential target node IDs by name
             # (There might be multiple if same name used in diff files)
@@ -894,7 +905,7 @@ async def vibegraph_search_by_signature(params: SearchInput) -> str:
         str: List of matching functions.
     """
     try:
-        db, _ = _get_context_for_path(".")
+        db, _ = _get_context_for_path(params.scope_path)
         with db._get_conn() as conn:
             query = (
                 "SELECT name, signature, file_path, start_line "
@@ -946,7 +957,7 @@ async def vibegraph_reindex_project(params: ReindexInput) -> str:
     Examples:
         - "Index the current project" -> path="."
         - "Reindex just the src folder" -> path="src"
-        - "Index a specific file" -> path="src/parser.py"
+        - "Index with absolute path (RECOMMENDED)" -> path="/abs/path/to/project"
 
     Features:
         - Respects .gitignore patterns
