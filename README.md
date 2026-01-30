@@ -19,12 +19,17 @@ VibeGraph is a code intelligence system that treats your codebase as a **nervous
 
 ## Supported Languages
 
-VibeGraph uses specific parsers for high-fidelity extraction:
-- **Python**: Deep support (Classes, Functions, Imports, Docstrings, Decorators, Visibility).
-- **JavaScript / TypeScript**: Classes, Functions, Interfaces, Inherits/Implements, Decorators.
-- **Go**: Structs, Interfaces, Functions, Methods.
-- **Rust**: Structs, Traits, Impls, Functions.
-- **C / C++ / Java / C# / Ruby / PHP**: Generic extraction of structural nodes.
+VibeGraph uses Tree-sitter for high-fidelity structural extraction. Support levels vary by language:
+
+| Language | Extensions | Support Level | Extracted Features |
+| :--- | :--- | :--- | :--- |
+| **Python** | `.py` | 🔥 Full | Classes, Functions, Imports, Docstrings, **Decorators**, **Visibility** |
+| **JavaScript/TS** | `.js`, `.ts`, `.tsx` | 💎 High | Classes, Functions, Interfaces, Inherits/Implements, **Decorators** |
+| **Go** | `.go` | ✅ Solid | Structs, Interfaces, Functions, Methods |
+| **Rust** | `.rs` | ✅ Solid | Structs, Traits, Impls, Functions |
+| **Java** | `.java` | 🛠️ Generic | Classes, Methods, Inheritance (Base extraction) |
+| **C / C++** | `.c`, `.cpp`, `.h` | 🛠️ Generic | Functions, Classes/Structs |
+| **C# / Ruby / PHP**| `.cs`, `.rb`, `.php` | 🛠️ Generic | Basic Structural Nodes |
 
 ## Quick Start
 
