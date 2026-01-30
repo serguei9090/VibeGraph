@@ -25,7 +25,7 @@ from vibegraph.mcp.server import (
 # Mock Database Setup
 @pytest.fixture
 def mock_db(monkeypatch, tmp_path):
-    """Overrides the _get_db function in server.py to use a temp file DB."""
+    """Overrides the _get_context_for_path function in server.py to use a temp file DB."""
 
     # Create a temp DB file
     db_file = tmp_path / "test_vibegraph.db"
@@ -67,10 +67,10 @@ def mock_db(monkeypatch, tmp_path):
     # func_b calls func_a
     db.upsert_edge(Edge(from_node_id="b", to_node_id="a", relation_type="calls"))
 
-    # Monkeypatch
+    # Monkeypatch - mocked root is tmp_path
     import vibegraph.mcp.server
 
-    monkeypatch.setattr(vibegraph.mcp.server, "_get_db", lambda: db)
+    monkeypatch.setattr(vibegraph.mcp.server, "_get_context_for_path", lambda path=None: (db, Path(tmp_path)))
 
     return db
 
@@ -81,9 +81,9 @@ def mock_db(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_get_structural_summary(mock_db):
+async def test_get_structural_summary(mock_db, tmp_path):
     """Test structural summary returns correct info."""
-    params = StructuralSummaryInput(file_path="a.py")
+    params = StructuralSummaryInput(file_path=str(tmp_path / "a.py"))
     summary = await vibegraph_get_structural_summary(params)
 
     # After path normalization, output contains absolute path
@@ -91,10 +91,10 @@ async def test_get_structural_summary(mock_db):
 
 
 @pytest.mark.asyncio
-async def test_get_structural_summary_json(mock_db):
+async def test_get_structural_summary_json(mock_db, tmp_path):
     """Test structural summary JSON output."""
     params = StructuralSummaryInput(
-        file_path="a.py",
+        file_path=str(tmp_path / "a.py"),
         response_format=ResponseFormat.JSON,
     )
     summary = await vibegraph_get_structural_summary(params)
@@ -109,9 +109,9 @@ async def test_get_structural_summary_json(mock_db):
 
 
 @pytest.mark.asyncio
-async def test_get_structural_summary_not_found(mock_db):
+async def test_get_structural_summary_not_found(mock_db, tmp_path):
     """Test structural summary for non-indexed file."""
-    params = StructuralSummaryInput(file_path="nonexistent.py")
+    params = StructuralSummaryInput(file_path=str(tmp_path / "nonexistent.py"))
     summary = await vibegraph_get_structural_summary(params)
 
     assert "not be indexed" in summary
@@ -123,9 +123,11 @@ async def test_get_structural_summary_not_found(mock_db):
 
 
 @pytest.mark.asyncio
-async def test_get_call_stack_up(mock_db):
+async def test_get_call_stack_up(mock_db, tmp_path):
     """Trace callers of func_a (should be func_b)."""
-    params = CallStackInput(node_name="func_a", direction=TraceDirection.UP)
+    params = CallStackInput(
+        node_name="func_a", direction=TraceDirection.UP, file_path=str(tmp_path / "a.py")
+    )
     trace = await vibegraph_get_call_stack(params)
 
     assert "Trace for `func_a`" in trace
@@ -134,9 +136,11 @@ async def test_get_call_stack_up(mock_db):
 
 
 @pytest.mark.asyncio
-async def test_get_call_stack_down(mock_db):
+async def test_get_call_stack_down(mock_db, tmp_path):
     """Trace callees of func_b (should be func_a)."""
-    params = CallStackInput(node_name="func_b", direction=TraceDirection.DOWN)
+    params = CallStackInput(
+        node_name="func_b", direction=TraceDirection.DOWN, file_path=str(tmp_path / "b.py")
+    )
     trace = await vibegraph_get_call_stack(params)
 
     assert "Trace for `func_b`" in trace
@@ -154,9 +158,9 @@ async def test_get_call_stack_not_found(mock_db):
 
 
 @pytest.mark.asyncio
-async def test_get_call_stack_both(mock_db):
+async def test_get_call_stack_both(mock_db, tmp_path):
     """Test call stack with both directions."""
-    params = CallStackInput(node_name="func_a", direction=TraceDirection.BOTH)
+    params = CallStackInput(node_name="func_a", direction=TraceDirection.BOTH, file_path=str(tmp_path / "a.py"))
     trace = await vibegraph_get_call_stack(params)
 
     assert "Callers (Incoming):" in trace
@@ -169,9 +173,9 @@ async def test_get_call_stack_both(mock_db):
 
 
 @pytest.mark.asyncio
-async def test_impact_analysis(mock_db):
+async def test_impact_analysis(mock_db, tmp_path):
     """If we change a.py (func_a), b.py (func_b) should be affected."""
-    params = ImpactAnalysisInput(file_path="a.py")
+    params = ImpactAnalysisInput(file_path=str(tmp_path / "a.py"))
     impact = await vibegraph_impact_analysis(params)
 
     assert "Impact Analysis" in impact
@@ -180,9 +184,9 @@ async def test_impact_analysis(mock_db):
 
 
 @pytest.mark.asyncio
-async def test_impact_analysis_no_impact(mock_db):
+async def test_impact_analysis_no_impact(mock_db, tmp_path):
     """If we change b.py, nothing depends on it."""
-    params = ImpactAnalysisInput(file_path="b.py")
+    params = ImpactAnalysisInput(file_path=str(tmp_path / "b.py"))
     impact = await vibegraph_impact_analysis(params)
 
     assert "Impact Analysis" in impact

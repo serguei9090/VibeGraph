@@ -27,21 +27,44 @@ mcp = FastMCP("vibegraph_mcp")
 # =============================================================================
 
 
-def _get_db() -> IndexerDB:
-    """Get a database connection."""
-    # Ensure context directory exists
-    context_dir = Path.cwd() / "vibegraph_context"
+def _get_context_for_path(path_hint: str | None = None) -> tuple[IndexerDB, Path]:
+    """
+    Determine the project root and database connection for a given path.
+
+    It searches upwards from the path_hint (or CWD if None) for markers:
+    .git, pyproject.toml, or vibegraph_context.
+    """
+    if not path_hint or path_hint == ".":
+        search_start = Path.cwd()
+    else:
+        search_start = Path(path_hint).resolve()
+
+    search_dir = search_start if search_start.is_dir() else search_start.parent
+    project_root = search_dir
+
+    # Traverse up for markers
+    for parent in [search_dir, *list(search_dir.parents)]:
+        if (
+            (parent / ".git").exists()
+            or (parent / "pyproject.toml").exists()
+            or (parent / "vibegraph_context").exists()
+        ):
+            project_root = parent
+            break
+
+    context_dir = project_root / "vibegraph_context"
     context_dir.mkdir(exist_ok=True)
     db_path = context_dir / "vibegraph.db"
-    return IndexerDB(db_path=str(db_path))
+
+    return IndexerDB(db_path=str(db_path)), project_root
 
 
-def _normalize_path(file_path: str) -> str:
-    """Normalize file path to match DB storage format (relative to project root)."""
+def _normalize_path(file_path: str, project_root: Path) -> str:
+    """Normalize file path relative to the identified project root."""
     try:
-        return str(Path(file_path).resolve().relative_to(Path.cwd()))
-    except ValueError:
-        # Fallback if path is not in CWD (e.g. system files)
+        return str(Path(file_path).resolve().relative_to(project_root))
+    except (ValueError, RuntimeError):
+        # Fallback if path is not in project root
         return str(Path(file_path).resolve())
 
 
@@ -336,8 +359,8 @@ async def vibegraph_get_structural_summary(params: StructuralSummaryInput) -> st
         - Use vibegraph_reindex_project to index files first
     """
     try:
-        normalized_path = _normalize_path(params.file_path)
-        db = _get_db()
+        db, root = _get_context_for_path(params.file_path)
+        normalized_path = _normalize_path(params.file_path, root)
 
         with db._get_conn() as conn:
             # Get total count
@@ -457,7 +480,7 @@ async def vibegraph_get_call_stack(params: CallStackInput) -> str:
         - Returns "Node not found" if function/class doesn't exist in index
     """
     try:
-        db = _get_db()
+        db, root = _get_context_for_path(params.file_path)
 
         with db._get_conn() as conn:
             query = "SELECT id, name, file_path, kind FROM nodes WHERE name = ?"
@@ -465,7 +488,7 @@ async def vibegraph_get_call_stack(params: CallStackInput) -> str:
 
             if params.file_path:
                 query += " AND file_path = ?"
-                query_params.append(_normalize_path(params.file_path))
+                query_params.append(_normalize_path(params.file_path, root))
 
             cursor = conn.execute(query, tuple(query_params))
             start_nodes = cursor.fetchall()
@@ -539,8 +562,8 @@ async def vibegraph_impact_analysis(params: ImpactAnalysisInput) -> str:
         - Returns "No nodes found" if file not indexed
     """
     try:
-        normalized_path = _normalize_path(params.file_path)
-        db = _get_db()
+        db, root = _get_context_for_path(params.file_path)
+        normalized_path = _normalize_path(params.file_path, root)
 
         with db._get_conn() as conn:
             cursor = conn.execute(
@@ -610,7 +633,8 @@ async def vibegraph_find_references(params: ReferencesInput) -> str:
         str: Markdown list of usages with location info.
     """
     try:
-        db = _get_db()
+        # Since we don't have a path, we fall back to CWD to find the root
+        db, _ = _get_context_for_path(".")
         with db._get_conn() as conn:
             # First find potential target node IDs by name
             # (There might be multiple if same name used in diff files)
@@ -676,8 +700,8 @@ async def vibegraph_get_dependencies(params: DependenciesInput) -> str:
         str: Markdown list of dependencies.
     """
     try:
-        normalized_path = _normalize_path(params.file_path)
-        db = _get_db()
+        db, root = _get_context_for_path(params.file_path)
+        normalized_path = _normalize_path(params.file_path, root)
 
         with db._get_conn() as conn:
             # Find nodes in this file, then check their outgoing import edges?
@@ -733,7 +757,7 @@ async def vibegraph_search_by_signature(params: SearchInput) -> str:
         str: List of matching functions.
     """
     try:
-        db = _get_db()
+        db, _ = _get_context_for_path(".")
         with db._get_conn() as conn:
             query = (
                 "SELECT name, signature, file_path, start_line "
@@ -796,11 +820,13 @@ async def vibegraph_reindex_project(params: ReindexInput) -> str:
         - Returns error message if path doesn't exist
         - Continues on individual file errors, reports overall success
     """
-    db = _get_db()
     try:
+        db, _ = _get_context_for_path(params.path)
+        target_path = Path(params.path).resolve()
+
         with redirect_stdout(sys.stderr):
-            reindex_all(db, params.path, verbose=True)
-        return _safe_str(f"✅ Successfully reindexed: {params.path}")
+            reindex_all(db, str(target_path), verbose=True)
+        return _safe_str(f"✅ Successfully reindexed: {target_path}")
     except Exception as e:
         return _handle_error(e, f"reindexing {params.path}")
 
