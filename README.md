@@ -1,5 +1,7 @@
 # VibeGraph: The Nervous System MCP
 
+![CI](https://github.com/serguei9090/VibeGraph/actions/workflows/ci.yml/badge.svg)
+
 > **Philosophy**: Structural Truth > Statistical Guessing
 
 VibeGraph is a code intelligence system that treats your codebase as a **nervous system**. Instead of vector embeddings and similarity search, it uses Tree-sitter for AST parsing and SQLite for relational queries. The result? A structural graph that AI agents can query and you can visualize in real-time.
