@@ -17,7 +17,7 @@ import ReactFlow, {
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import axios from 'axios';
-import { RefreshCw, Search, Layers, Activity, Code, Filter, Folder, FileCode } from 'lucide-react';
+import { RefreshCw, Search, Layers, Activity, Code, Filter, Folder, FileCode, Lock, Globe } from 'lucide-react';
 import './App.css';
 
 // API Configuration
@@ -195,6 +195,8 @@ const VibeNode = memo(({ data }: { data: any }) => {
   const isInterface = data.kind === 'interface';
   const isHighlighted = data.isHighlighted;
   const isDimmed = data.isDimmed;
+  const isPrivate = data.visibility === 'private';
+  const decorators = data.decorators ? data.decorators.split(',').filter(Boolean) : [];
 
   let borderColor = '#6366f1';
   let bgColor = '#1a1b23';
@@ -206,6 +208,10 @@ const VibeNode = memo(({ data }: { data: any }) => {
   if (isHighlighted) {
     bgColor = '#2e2f3d'; // slightly lighter background
     borderColor = '#ffffff'; // bright border
+  }
+
+  if (data.isImpact) {
+    borderColor = '#f87171'; // Red for impact
   }
 
   const style: React.CSSProperties = {
@@ -220,7 +226,21 @@ const VibeNode = memo(({ data }: { data: any }) => {
   return (
     <div className="vibe-node" style={style}>
       <Handle type="target" position={Position.Top} style={{ background: borderColor }} />
-      <div className="node-type">{data.kind}</div>
+      <div className="node-header">
+        <div className="node-type">
+          {isPrivate ? <Lock size={10} style={{ marginRight: 4 }} /> : <Globe size={10} style={{ marginRight: 4 }} />}
+          {data.kind}
+        </div>
+        {decorators.length > 0 && (
+          <div className="node-decorators">
+            {decorators.map((d: string) => (
+              <span key={d} className="decorator-badge" title={d}>
+                @{d.length > 10 ? d.substring(0, 10) + '..' : d}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
       <div className="node-name">{data.label}</div>
       {data.signature && (
         <div style={{ marginTop: 4, fontSize: '9px', opacity: 0.6, fontFamily: 'JetBrains Mono' }}>
@@ -291,6 +311,8 @@ export default function App() {
   // Interaction State
   const [filter, setFilter] = useState('');
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set(['function', 'class', 'interface', 'module']));
+  const [showPrivate, setShowPrivate] = useState(true);
+  const [impactMode, setImpactMode] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<string>('');
 
   // Ref for raw graph data to support client-side filtering
@@ -307,8 +329,12 @@ export default function App() {
 
     if (rawNodes.length === 0) return;
 
-    // 1. Filter Nodes by Type
-    let filteredNodes = rawNodes.filter(n => activeFilters.has(n.kind));
+    // 1. Filter Nodes by Type and Visibility
+    let filteredNodes = rawNodes.filter(n => {
+      const typeMatch = activeFilters.has(n.kind);
+      const visibilityMatch = showPrivate || n.visibility !== 'private';
+      return typeMatch && visibilityMatch;
+    });
 
     // 2. Filter Edges (must connect two visible nodes)
     const visibleNodeIds = new Set(filteredNodes.map(n => n.id));
@@ -327,16 +353,39 @@ export default function App() {
     if (selectedElement) {
       if (selectedElement.type === 'node') {
         highlightedNodes.add(selectedElement.id);
-        filteredEdges.forEach(e => {
-          if (e.from_node_id === selectedElement.id) {
-            highlightedNodes.add(e.to_node_id);
-            highlightedEdges.add(`${e.from_node_id}-${e.to_node_id}-${e.relation_type}`);
+
+        if (impactMode) {
+          // BFS for Transitive Impact (3 levels upstream)
+          // Impact flows from Callee -> Caller (opposite of 'calls' direction)
+          let currentLevel = new Set([selectedElement.id]);
+
+          for (let depth = 1; depth <= 3; depth++) {
+            const nextLevel = new Set<string>();
+            filteredEdges.forEach(e => {
+              if (currentLevel.has(e.to_node_id)) {
+                if (!highlightedNodes.has(e.from_node_id)) {
+                  highlightedNodes.add(e.from_node_id);
+                  nextLevel.add(e.from_node_id);
+                }
+                highlightedEdges.add(`${e.from_node_id}-${e.to_node_id}-${e.relation_type}`);
+              }
+            });
+            currentLevel = nextLevel;
+            if (currentLevel.size === 0) break;
           }
-          if (e.to_node_id === selectedElement.id) {
-            highlightedNodes.add(e.from_node_id);
-            highlightedEdges.add(`${e.from_node_id}-${e.to_node_id}-${e.relation_type}`);
-          }
-        });
+        } else {
+          // Normal Neighbor Highlighting (Local connections)
+          filteredEdges.forEach(e => {
+            if (e.from_node_id === selectedElement.id) {
+              highlightedNodes.add(e.to_node_id);
+              highlightedEdges.add(`${e.from_node_id}-${e.to_node_id}-${e.relation_type}`);
+            }
+            if (e.to_node_id === selectedElement.id) {
+              highlightedNodes.add(e.from_node_id);
+              highlightedEdges.add(`${e.from_node_id}-${e.to_node_id}-${e.relation_type}`);
+            }
+          });
+        }
       } else if (selectedElement.type === 'edge') {
         const [from, to] = selectedElement.id.split('-');
         highlightedEdges.add(selectedElement.id);
@@ -369,8 +418,11 @@ export default function App() {
           signature: n.signature,
           docstring: n.docstring,
           file_path: n.file_path,
+          visibility: n.visibility,
+          decorators: n.decorators,
           isHighlighted,
-          isDimmed
+          isDimmed,
+          isImpact: impactMode && highlightedNodes.has(n.id) && n.id !== selectedElement?.id
         },
       };
     });
@@ -433,7 +485,7 @@ export default function App() {
       console.error("Layout Error:", layoutError);
       setError("Layout failed (ELK error). Check console.");
     }
-  }, [activeFilters, filter, selectedElement, setNodes, setEdges]);
+  }, [activeFilters, showPrivate, impactMode, filter, selectedElement, setNodes, setEdges]);
 
 
   const fetchGraph = async () => {
@@ -655,6 +707,18 @@ export default function App() {
               <span style={{ textTransform: 'capitalize' }}>{kind}</span>
             </label>
           ))}
+          <div style={{ borderTop: '1px solid var(--border-color)', margin: '4px 0', paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '12px', cursor: 'pointer' }}>
+              <input type="checkbox" checked={showPrivate} onChange={() => setShowPrivate(!showPrivate)} />
+              <span>Show Private</span>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '12px', cursor: 'pointer', color: impactMode ? '#f87171' : 'inherit' }}>
+              <input type="checkbox" checked={impactMode} onChange={() => setImpactMode(!impactMode)} />
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Activity size={12} /> Deep Impact Mode
+              </span>
+            </label>
+          </div>
         </Panel>
 
         <Panel position="bottom-right" className="glass-panel" style={{ padding: '8px 12px', marginBottom: 20, marginRight: 20 }}>
@@ -665,6 +729,6 @@ export default function App() {
           </div>
         </Panel>
       </ReactFlow>
-    </div>
+    </div >
   );
 }
