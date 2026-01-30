@@ -62,10 +62,13 @@ def _get_context_for_path(path_hint: str | None = None) -> tuple[IndexerDB, Path
 def _normalize_path(file_path: str, project_root: Path) -> str:
     """Normalize file path relative to the identified project root."""
     try:
-        return str(Path(file_path).resolve().relative_to(project_root))
+        # Use .resolve() consistently and switch to forward slashes for DB storage
+        abs_file = Path(file_path).resolve()
+        abs_root = project_root.resolve()
+        return str(abs_file.relative_to(abs_root)).replace("\\", "/")
     except (ValueError, RuntimeError):
         # Fallback if path is not in project root
-        return str(Path(file_path).resolve())
+        return str(Path(file_path).resolve()).replace("\\", "/")
 
 
 def _safe_str(s: str) -> str:

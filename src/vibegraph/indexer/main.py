@@ -8,16 +8,24 @@ from vibegraph.indexer.db import IndexerDB
 from vibegraph.indexer.parser import ParserFactory
 
 
-def index_file(db: IndexerDB, file_path: str, verbose: bool = True):
+def index_file(
+    db: IndexerDB, file_path: str, project_root: Path | None = None, verbose: bool = True
+):
     """Index a single file."""
     try:
         abs_path = Path(file_path).resolve()
-        try:
-            # Store relative paths for portability
-            rel_path = str(abs_path.relative_to(Path.cwd()))
-        except ValueError:
-            # Fallback if outside current working directory
-            rel_path = str(abs_path)
+
+        # Calculate relative path
+        if project_root:
+            try:
+                rel_path = str(abs_path.relative_to(project_root.resolve())).replace("\\", "/")
+            except ValueError:
+                rel_path = str(abs_path).replace("\\", "/")
+        else:
+            try:
+                rel_path = str(abs_path.relative_to(Path.cwd().resolve())).replace("\\", "/")
+            except ValueError:
+                rel_path = str(abs_path).replace("\\", "/")
 
         parser = ParserFactory.get_parser(rel_path)
         if not parser:
@@ -84,7 +92,7 @@ def reindex_all(db: IndexerDB, target_path_str: str, verbose: bool = True):
         spec = load_gitignore(target_path)
 
     if target_path.is_file():
-        index_file(db, str(target_path), verbose=verbose)
+        index_file(db, str(target_path), project_root=target_path.parent, verbose=verbose)
     elif target_path.is_dir():
         for root, dirs, files in os.walk(target_path):
             current_root = Path(root)
@@ -109,7 +117,7 @@ def reindex_all(db: IndexerDB, target_path_str: str, verbose: bool = True):
                         # Path not relative to target_path (shouldn't happen with walk)
                         pass
 
-                index_file(db, str(full_path), verbose=verbose)
+                index_file(db, str(full_path), project_root=target_path, verbose=verbose)
     else:
         if verbose:
             print(f"Path not found: {target_path}")

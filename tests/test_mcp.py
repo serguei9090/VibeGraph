@@ -70,7 +70,9 @@ def mock_db(monkeypatch, tmp_path):
     # Monkeypatch - mocked root is tmp_path
     import vibegraph.mcp.server
 
-    monkeypatch.setattr(vibegraph.mcp.server, "_get_context_for_path", lambda path=None: (db, Path(tmp_path)))
+    monkeypatch.setattr(
+        vibegraph.mcp.server, "_get_context_for_path", lambda path=None: (db, Path(tmp_path))
+    )
 
     return db
 
@@ -160,7 +162,9 @@ async def test_get_call_stack_not_found(mock_db):
 @pytest.mark.asyncio
 async def test_get_call_stack_both(mock_db, tmp_path):
     """Test call stack with both directions."""
-    params = CallStackInput(node_name="func_a", direction=TraceDirection.BOTH, file_path=str(tmp_path / "a.py"))
+    params = CallStackInput(
+        node_name="func_a", direction=TraceDirection.BOTH, file_path=str(tmp_path / "a.py")
+    )
     trace = await vibegraph_get_call_stack(params)
 
     assert "Callers (Incoming):" in trace
