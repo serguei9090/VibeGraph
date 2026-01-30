@@ -29,8 +29,11 @@ class Edge(BaseModel):
 class IndexerDB:
     def __init__(self, db_path: str | None = None):
         if db_path is None:
-            # Default to local context directory
-            context_dir = Path.cwd() / "vibegraph_context"
+            # Try to find the project root relative to this file's location
+            # This file is at: src/vibegraph/indexer/db.py
+            # Project root is 3 levels up from db.py
+            pkg_root = Path(__file__).resolve().parent.parent.parent.parent
+            context_dir = pkg_root / "vibegraph_context"
             context_dir.mkdir(exist_ok=True)
             self.db_path = str(context_dir / "vibegraph.db")
         else:

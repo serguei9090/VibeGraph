@@ -186,7 +186,10 @@ async def test_impact_analysis_no_impact(mock_db):
     impact = await vibegraph_impact_analysis(params)
 
     assert "Impact Analysis" in impact
-    assert "[OK] No external dependencies found" in impact or "✅ No external dependencies found" in impact
+    assert (
+        "[OK] No external dependencies found" in impact
+        or "✅ No external dependencies found" in impact
+    )
 
 
 # =============================================================================

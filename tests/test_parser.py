@@ -38,10 +38,10 @@ class MyClass:
 
     # Check Edges (File defines hello_world and MyClass, MyClass defines method)
     assert len(edges) == 3
-    
+
     # helper to find edges
     has_edge = lambda f, t: any(e.from_node_id == f and e.to_node_id == t for e in edges)
-    
+
     assert has_edge(module_node.id, func_node.id)
     assert has_edge(module_node.id, class_node.id)
     assert has_edge(class_node.id, method_node.id)

@@ -11,9 +11,56 @@ from vibegraph.indexer.main import index_file
 
 
 class CodeChangeHandler(FileSystemEventHandler):
-    def __init__(self, db: IndexerDB, on_change: Callable[[], None] | None = None):
+    def __init__(
+        self,
+        db: IndexerDB,
+        on_change: Callable[[], None] | None = None,
+        root_path: str = ".",
+    ):
         self.db = db
         self.on_change = on_change
+        self.root_path = Path(root_path).resolve()
+        self.gitignore_spec = self._load_gitignore()
+
+    def _load_gitignore(self):
+        gitignore_path = self.root_path / ".gitignore"
+        if gitignore_path.exists():
+            try:
+                import pathspec
+
+                with open(gitignore_path, encoding="utf-8") as f:
+                    return pathspec.PathSpec.from_lines("gitignore", f)
+            except Exception as e:
+                print(f"Warning: Failed to load .gitignore: {e}")
+        return None
+
+    def _should_ignore(self, file_path: str) -> bool:
+        """Check if file should be ignored based on gitignore and common patterns."""
+        path = Path(file_path).resolve()
+
+        # Standard strict ignores
+        ignore_patterns = [
+            ".git",
+            ".venv",
+            "node_modules",
+            "__pycache__",
+            ".ruff_cache",
+            "dist",
+            "build",
+            "vibegraph_context",
+        ]
+        if any(p in path.parts for p in ignore_patterns):
+            return True
+
+        if self.gitignore_spec:
+            try:
+                rel_path = path.relative_to(self.root_path)
+                if self.gitignore_spec.match_file(str(rel_path)):
+                    return True
+            except ValueError:
+                pass  # Not relative to root
+
+        return False
 
     def _notify(self):
         if self.on_change:
@@ -23,21 +70,21 @@ class CodeChangeHandler(FileSystemEventHandler):
                 print(f"Error in watcher callback: {e}")
 
     def on_modified(self, event):
-        if event.is_directory:
+        if event.is_directory or self._should_ignore(event.src_path):
             return
         print(f"File modified: {event.src_path}")
         index_file(self.db, event.src_path)
         self._notify()
 
     def on_created(self, event):
-        if event.is_directory:
+        if event.is_directory or self._should_ignore(event.src_path):
             return
         print(f"File created: {event.src_path}")
         index_file(self.db, event.src_path)
         self._notify()
 
     def on_deleted(self, event):
-        if event.is_directory:
+        if event.is_directory or self._should_ignore(event.src_path):
             return
         print(f"File deleted: {event.src_path}")
         self.db.clear_file(event.src_path)
@@ -50,7 +97,7 @@ def start_observer(path: str, db: IndexerDB, callback: Callable[[], None] | None
     if not path_obj.exists():
         print(f"Warning: Path not found: {path}")
 
-    event_handler = CodeChangeHandler(db, callback)
+    event_handler = CodeChangeHandler(db, callback, root_path=str(path_obj))
     observer = Observer()
     observer.schedule(event_handler, str(path_obj), recursive=True)
     observer.start()
