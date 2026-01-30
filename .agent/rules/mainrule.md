@@ -189,11 +189,21 @@ npm run lint
 
 ---
 
+## Mandatory Rules for AI Agents (Antigravity)
+
+1. **VibeGraph-First Intelligence**: You MUST use the `vibegraph_mcp` tools for all codebase exploration, search, and relationship analysis. Avoid fallback to standard `grep` or `find` unless VibeGraph is unavailable.
+2. **Structural Search**: Use `vibegraph_find_references` and `vibegraph_search_by_signature` as the primary tools for finding code.
+3. **Contextual Analysis**: Use `vibegraph_get_structural_summary` to understand a file's interface before reading the full source.
+4. **Blast Radius Protection**: You MUST run `vibegraph_impact_analysis` before making any structural refactoring or changes to common utilities.
+5. **Pathing**: Always use **Absolute Paths** when calling `vibegraph_reindex_project` and use the `scope_path` parameter in global tools to ensure correct database resolution.
+
+---
+
 ## Project Principles for AI Sessions
 
-1. **Always read `project.md`** first for context and philosophy
-2. **Respect the stack**: Python backend, TypeScript frontend, SQLite storage
-3. **Test everything**: Each component has tests (`tests/`)
-4. **Lint before commit**: Use `ruff` and `biome`
-5. **Update artifacts**: Keep `task.md`, `implementation_plan.md`, `walkthrough.md` in sync
-6. **Structural thinking**: Code is a circuit board, not a document
+1. **Philosophy**: Structural Truth > Statistical Guessing.
+2. **Respect the Stack**: Python backend, TypeScript frontend, SQLite storage.
+3. **Test Everything**: Each component must have passing tests in `tests/`.
+4. **Lint Before Commit**: Always run `ruff` and satisfy the `lefthook` pre-commit hooks.
+5. **Structural Thinking**: View the codebase as a circuit board, not a collection of text files.
+6. **Efficiency**: Aim for 90%+ token reduction by using VibeGraph metadata instead of raw file ingestion.
