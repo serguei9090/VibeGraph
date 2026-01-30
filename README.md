@@ -83,6 +83,23 @@ VibeGraph exposes a **Model Context Protocol (MCP)** server that allows AI agent
 - **`vibegraph_search_by_signature(pattern, scope_path)`**: Semantic search using GLOb patterns in signatures (e.g., `%IndexerDB%` to find all functions using that type).
 - **`vibegraph_reindex_project(path)`**: Trigger a refresh of the index for a specific directory or file.
 
+## Map Room Intelligence
+
+The Web Visualizer (Map Room) includes interactive panels to filter and analyze the codebase:
+
+### Visual Indicators (Legend)
+- <span style="display: inline-block; width: 8px; height: 8px; background: #6366f1; border-radius: 2px;"></span> **Function**: Standard logic blocks.
+- <span style="display: inline-block; width: 8px; height: 8px; background: #a855f7; border-radius: 2px;"></span> **Class**: Blueprints/Objects.
+- <span style="display: inline-block; width: 8px; height: 8px; background: #10b981; border-radius: 2px;"></span> **Interface**: Type definitions and contracts.
+- **🔒 Icon**: Private symbol (internal use).
+- **🌐 Icon**: Public/Exported symbol.
+- **@badge**: Decorators/Annotations (e.g., `@mcp.tool`).
+
+### Control Panels
+- **Type Filters**: Toggle visibility of Functions, Classes, and Interfaces to focus on specific architectural layers.
+- **Show Private**: Disable to hide internal implementation details and focus on the public API.
+- **Deep Impact Mode**: When enabled, clicking a node highlights its **Transitive Impact** (Blast Radius). This shows every function that would need to be checked if that specific node is modified, up to 3 levels deep.
+
 ## Project Structure
 
 ```

@@ -639,7 +639,8 @@ export default function App() {
             backgroundColor: '#0d0d10',
             border: '1px solid rgba(99, 102, 241, 0.3)',
             width: 220,
-            height: 160
+            height: 160,
+            bottom: 60
           }}
           nodeColor={(n: any) => {
             if (n.data?.kind === 'class') return '#a855f7';
