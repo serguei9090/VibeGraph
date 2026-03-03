@@ -1,5 +1,10 @@
 # VibeGraph: The Nervous System MCP
+## This is a personal learning project created for educational purposes and to explore different code concepts with ai concepts. 
 
+* **Status:** Personal sandbox / Portfolio piece.
+* **License:** This project is open-source and available for public educational use under the MIT License.
+* **Purpose:** Academic research and technical skill development.
+* 
 ![CI](https://github.com/serguei9090/VibeGraph/actions/workflows/ci.yml/badge.svg)
 
 > **Philosophy**: Structural Truth > Statistical Guessing
